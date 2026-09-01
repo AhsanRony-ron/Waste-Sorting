@@ -1,215 +1,140 @@
-import cv2
-import numpy as np
-import time
+"""
+Analisis proporsi data REAL (webcam) vs TRASHNET dalam dataset training.
+
+Cara deteksi:
+- Data REAL  -> nama file mengandung pola timestamp: 8 digit tanggal + underscore + 6 digit jam
+                contoh: 20250611_143022_123456.jpg, crop_20250611_143022.jpg, dsb.
+- Data TRASHNET -> nama file TIDAK mengandung pola timestamp tsb (biasanya diawali nama kelas).
+
+Output:
+1. Tabel ringkasan jumlah & persentase real vs trashnet per kelas
+2. File CSV berisi mapping tiap file -> kelas -> sumber (buat dipakai nanti
+   untuk oversampling / split validation manual)
+"""
+
 import os
-from datetime import datetime
-import tensorflow as tf
+import re
+import csv
+from collections import defaultdict
 
-# ===== Setup model =====
-interpreter = tf.lite.Interpreter(model_path="waste_classifier.tflite")
-interpreter.allocate_tensors()
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-class_names = ['background', 'daun', 'kaleng', 'kertas', 'plastik']
+DATASET_DIR = "dataset"          # sesuaikan kalau lokasi beda
+OUTPUT_CSV = "dataset_source_mapping.csv"
 
-def classify(cropped_bgr):
-    img = cv2.cvtColor(cropped_bgr, cv2.COLOR_BGR2RGB)
-    img = cv2.resize(img, (224, 224))
-    img_array = np.array(img, dtype=np.float32) / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
+# Pola timestamp: 8 digit tanggal + _ + 6 digit jam (opsional ada _digit tambahan / mikrodetik)
+# Contoh yang match: 20250611_143022, 20250611_143022_123456, crop_20250611_143022_abc
+TIMESTAMP_PATTERN = re.compile(r"\d{8}_\d{6}")
 
-    interpreter.set_tensor(input_details[0]['index'], img_array)
-    interpreter.invoke()
-    output = interpreter.get_tensor(output_details[0]['index'])[0]
+VALID_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp")
 
-    predicted_idx = np.argmax(output)
-    confidence = output[predicted_idx]
-    return class_names[predicted_idx], confidence, output
 
-# ===== Parameter dasar frame diff =====
-DIFF_THRESHOLD = 50
-CHANGE_AREA_THRESHOLD = 8000
-MIN_CONTOUR_AREA = 10000
-MIN_ASPECT_RATIO = 0.2
-MAX_ASPECT_RATIO = 5.0
-STABLE_FRAMES_NEEDED_NORMAL = 10
-STABLE_FRAMES_NEEDED_CONFIDENT = 2
-CONFIDENT_AREA_THRESHOLD = 15000
-MOTION_TOLERANCE_NORMAL = 500
-MOTION_TOLERANCE_CONFIDENT = 1000
-FORCE_REFRESH_TIMEOUT = 10.0
-REFRESH_COOLDOWN = 10.0
+def detect_source(filename: str) -> str:
+    """Return 'real' kalau nama file mengandung pola timestamp, else 'trashnet'."""
+    if TIMESTAMP_PATTERN.search(filename):
+        return "real"
+    return "trashnet"
 
-DEBUG_DIR = "calibration_debug"
-os.makedirs(DEBUG_DIR, exist_ok=True)
 
-cap = cv2.VideoCapture(1)
+def main():
+    if not os.path.isdir(DATASET_DIR):
+        print(f"[ERROR] Folder '{DATASET_DIR}' tidak ditemukan. "
+              f"Sesuaikan variabel DATASET_DIR di script ini.")
+        return
 
-print("Ambil frame referensi dalam 3 detik, pastikan area kosong...")
-time.sleep(3)
-ret, reference = cap.read()
-reference_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
-reference_gray = cv2.GaussianBlur(reference_gray, (25, 25), 0)
+    summary = defaultdict(lambda: {"real": 0, "trashnet": 0})
+    rows = []
+    unmatched_examples = defaultdict(list)  # buat sanity-check manual kalau perlu
 
-prev_gray = reference_gray.copy()
-stable_count = 0
-object_present = False
-last_activity_time = time.time()
-last_refresh_time = time.time()
-
-detection_start_time = None
-
-print("Mulai kalibrasi. Tekan 'r' buat force-refresh manual, 'q' buat keluar.\n")
-
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("Gagal capture frame")
-        break
-
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (25, 25), 0)
-
-    diff_ref = cv2.absdiff(reference_gray, gray)
-    thresh_ref = cv2.threshold(diff_ref, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)[1]
-    kernel = np.ones((5, 5), np.uint8)
-    thresh_ref = cv2.erode(thresh_ref, kernel, iterations=1)
-    thresh_ref = cv2.dilate(thresh_ref, kernel, iterations=2)
-    change_area = cv2.countNonZero(thresh_ref)
-
-    diff_prev = cv2.absdiff(prev_gray, gray)
-    thresh_prev = cv2.threshold(diff_prev, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)[1]
-    motion_area = cv2.countNonZero(thresh_prev)
-
-    contour_area = 0
-    aspect_ratio = 0
-    shape_valid = False
-    bbox = None
-    required_stable = STABLE_FRAMES_NEEDED_NORMAL
-    motion_tolerance = MOTION_TOLERANCE_NORMAL
-    confidence_mode = "normal"
-
-    display_frame = frame.copy()
-
-    if change_area > CHANGE_AREA_THRESHOLD:
-        if detection_start_time is None:
-            detection_start_time = time.perf_counter()
-
-        contours, _ = cv2.findContours(thresh_ref, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if contours:
-            largest_contour = max(contours, key=cv2.contourArea)
-            contour_area = cv2.contourArea(largest_contour)
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            aspect_ratio = w / h if h > 0 else 0
-            bbox = (x, y, w, h)
-
-            if contour_area >= MIN_CONTOUR_AREA and MIN_ASPECT_RATIO < aspect_ratio < MAX_ASPECT_RATIO:
-                shape_valid = True
-
-            if shape_valid and contour_area >= CONFIDENT_AREA_THRESHOLD:
-                required_stable = STABLE_FRAMES_NEEDED_CONFIDENT
-                motion_tolerance = MOTION_TOLERANCE_CONFIDENT
-                confidence_mode = "confident"
-            else:
-                required_stable = STABLE_FRAMES_NEEDED_NORMAL
-                motion_tolerance = MOTION_TOLERANCE_NORMAL
-                confidence_mode = "normal"
-
-            box_color = (0, 255, 0) if shape_valid else (0, 0, 255)
-            cv2.rectangle(display_frame, (x, y), (x + w, y + h), box_color, 2)
-
-        if shape_valid:
-            if motion_area < motion_tolerance:
-                stable_count += 1
-            else:
-                stable_count = 0
-
-            if stable_count >= required_stable and not object_present:
-                t_stable_reached = time.perf_counter()
-                detection_duration = t_stable_reached - detection_start_time
-
-                x, y, w, h = bbox
-                padding = 20
-                x = max(0, x - padding)
-                y = max(0, y - padding)
-                w = min(frame.shape[1] - x, w + 2 * padding)
-                h = min(frame.shape[0] - y, h + 2 * padding)
-
-                t_crop_start = time.perf_counter()
-                cropped_object = frame[y:y+h, x:x+w]
-                t_crop_end = time.perf_counter()
-                crop_duration = t_crop_end - t_crop_start
-
-                t_infer_start = time.perf_counter()
-                label, confidence, all_scores = classify(cropped_object)
-                t_infer_end = time.perf_counter()
-                infer_duration = t_infer_end - t_infer_start
-
-                total_duration = t_infer_end - detection_start_time
-
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                cv2.imwrite(os.path.join(DEBUG_DIR, f"crop_{timestamp}.jpg"), cropped_object)
-
-                print(f"\n>>> STABIL & VALID [{confidence_mode}] -> disimpan crop_{timestamp}.jpg")
-                print(f"    Prediksi: {label} ({confidence*100:.2f}%)")
-                for i, cname in enumerate(class_names):
-                    print(f"      {cname}: {all_scores[i]*100:.2f}%")
-                print(f"    --- Timing ---")
-                print(f"    Deteksi -> stabil : {detection_duration*1000:.1f} ms")
-                print(f"    Crop              : {crop_duration*1000:.2f} ms")
-                print(f"    Inference model   : {infer_duration*1000:.1f} ms")
-                print(f"    TOTAL (deteksi->hasil): {total_duration*1000:.1f} ms\n")
-
-                cv2.imshow("Cropped Object", cropped_object)
-                object_present = True
-                last_activity_time = time.time()
-        else:
-            stable_count = 0
-            if object_present:
-                print(">>> Objek hilang / hanya noise, reset baseline.\n")
-            object_present = False
-    else:
-        if object_present:
-            print(">>> Area kosong lagi, reset baseline.\n")
-        object_present = False
-        stable_count = 0
-        detection_start_time = None
-
-    time_since_activity = time.time() - last_activity_time
-    time_since_last_refresh = time.time() - last_refresh_time
-
-    should_force_refresh = (
-        not object_present and
-        time_since_activity >= FORCE_REFRESH_TIMEOUT and
-        time_since_last_refresh >= REFRESH_COOLDOWN
+    class_folders = sorted(
+        d for d in os.listdir(DATASET_DIR)
+        if os.path.isdir(os.path.join(DATASET_DIR, d))
     )
 
-    prev_gray = gray.copy()
+    if not class_folders:
+        print(f"[ERROR] Tidak ada subfolder kelas di dalam '{DATASET_DIR}'.")
+        return
 
-    status_lines = [
-        f"change_area={change_area}  motion_area={motion_area}",
-        f"contour_area={contour_area:.0f}  aspect_ratio={aspect_ratio:.2f}",
-        f"mode={confidence_mode}  stable={stable_count}/{required_stable}",
-        f"since_activity={time_since_activity:.1f}s  (tekan 'r' utk refresh manual)",
-    ]
-    for i, line in enumerate(status_lines):
-        cv2.putText(display_frame, line, (10, 25 + i * 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 1)
+    for class_name in class_folders:
+        class_path = os.path.join(DATASET_DIR, class_name)
+        files = [
+            f for f in os.listdir(class_path)
+            if f.lower().endswith(VALID_EXTENSIONS)
+        ]
 
-    # ===== Tampilkan window DULU, baru waitKey =====
-    cv2.imshow("Live Feed", display_frame)
-    cv2.imshow("Diff Mask", thresh_ref)
-    key = cv2.waitKey(1) & 0xFF
+        for fname in files:
+            source = detect_source(fname)
+            summary[class_name][source] += 1
+            rows.append({
+                "filepath": os.path.join(class_path, fname),
+                "class": class_name,
+                "source": source,
+            })
+            # simpan sedikit contoh nama file yg diklasifikasi 'trashnet'
+            # tapi ada digit-digit mencurigakan, buat manual double check
+            if source == "trashnet" and any(ch.isdigit() for ch in fname):
+                if len(unmatched_examples[class_name]) < 5:
+                    unmatched_examples[class_name].append(fname)
 
-    if should_force_refresh or key == ord('r'):
-        reference_gray = gray.copy()
-        last_refresh_time = time.time()
-        last_activity_time = time.time()
-        reason = "manual (tombol r)" if key == ord('r') else f"otomatis (tidak ada aktivitas {time_since_activity:.1f}s)"
-        print(f">>> [REFRESH] Referensi diperbarui — {reason}\n")
+    # ===== Cetak ringkasan =====
+    print("\n" + "=" * 70)
+    print(f"{'Kelas':<15}{'Real':>10}{'TrashNet':>12}{'Total':>10}{'% Real':>12}")
+    print("=" * 70)
 
-    if key == ord('q'):
-        break
+    total_real = 0
+    total_trashnet = 0
 
-cap.release()
-cv2.destroyAllWindows()
+    for class_name in class_folders:
+        r = summary[class_name]["real"]
+        t = summary[class_name]["trashnet"]
+        total = r + t
+        pct_real = (r / total * 100) if total > 0 else 0
+        total_real += r
+        total_trashnet += t
+        print(f"{class_name:<15}{r:>10}{t:>12}{total:>10}{pct_real:>11.1f}%")
+
+    grand_total = total_real + total_trashnet
+    grand_pct = (total_real / grand_total * 100) if grand_total > 0 else 0
+    print("-" * 70)
+    print(f"{'TOTAL':<15}{total_real:>10}{total_trashnet:>12}{grand_total:>10}{grand_pct:>11.1f}%")
+    print("=" * 70)
+
+    # ===== Peringatan kalau proporsi timpang =====
+    print("\n[CATATAN]")
+    for class_name in class_folders:
+        r = summary[class_name]["real"]
+        t = summary[class_name]["trashnet"]
+        total = r + t
+        if total == 0:
+            continue
+        pct_real = r / total * 100
+        if pct_real < 10:
+            print(f"  - '{class_name}': data real cuma {pct_real:.1f}% dari total "
+                  f"({r} dari {total}) -> risiko domain shift TINGGI, "
+                  f"pertimbangkan oversampling.")
+        elif pct_real < 25:
+            print(f"  - '{class_name}': data real {pct_real:.1f}% -> masih minoritas, "
+                  f"waspadai saat evaluasi.")
+
+    # ===== Contoh file 'trashnet' yang punya digit tapi tidak match pola timestamp =====
+    # (buat sanity check, siapa tahu ada format tanggal lain yang kelewat)
+    any_unmatched = any(unmatched_examples[c] for c in class_folders)
+    if any_unmatched:
+        print("\n[SANITY CHECK] Beberapa file dianggap 'trashnet' tapi mengandung digit "
+              "(cek manual kalau-kalau ada format timestamp lain yang tidak terdeteksi):")
+        for class_name in class_folders:
+            examples = unmatched_examples[class_name]
+            if examples:
+                print(f"  - {class_name}: {examples}")
+
+    # ===== Simpan CSV mapping =====
+    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["filepath", "class", "source"])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(f"\n[OK] Mapping lengkap {len(rows)} file disimpan ke '{OUTPUT_CSV}'")
+    print("File ini bisa dipakai buat langkah selanjutnya: oversampling data real, "
+          "atau bikin validation split manual yang representatif.")
+
+
+if __name__ == "__main__":
+    main()

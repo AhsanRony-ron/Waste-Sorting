@@ -13,10 +13,10 @@ data/
 
 # Model hasil training (TFLite, checkpoint, dsb)
 *.h5
-*.tflite
 *.pb
 *.pt
 *.pth
+*.keras
 checkpoints/
 saved_model/
 runs/
@@ -40,3 +40,6 @@ Thumbs.db
 
 trashnet-raw/
 calibrating_debug/
+data_log/
+hasil_grafik/
+calibration_debug/
