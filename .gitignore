@@ -1,0 +1,39 @@
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Dataset (biasanya berat, apalagi dataset self-collected daun kering dari piringan)
+dataset/
+data/
+*.jpg
+*.jpeg
+*.png
+!docs/**/*.png    # kecualikan gambar dokumentasi kalau ada
+
+# Model hasil training (TFLite, checkpoint, dsb)
+*.h5
+*.tflite
+*.pb
+*.pt
+*.pth
+checkpoints/
+saved_model/
+runs/
+logs/
+
+# Notebook checkpoint
+.ipynb_checkpoints/
+
+# Cache Python
+__pycache__/
+*.pyc
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Environment variable / config lokal
+.env
