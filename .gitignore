@@ -17,6 +17,7 @@ data/
 *.pt
 *.pth
 *.keras
+*.csv
 checkpoints/
 saved_model/
 runs/
