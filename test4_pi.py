@@ -95,7 +95,7 @@ REFRESH_COOLDOWN = 30.0
 POST_PRESET_DELAY = 2.0
 POST_NEUTRAL_DELAY = 1.5
 
-STUCK_RETRY_TIMEOUT = 5.0    # detik objek masih nyangkut sebelum coba gerak ulang
+STUCK_RETRY_TIMEOUT = 2.0    # detik objek masih nyangkut sebelum coba gerak ulang
 STUCK_RETRY_COOLDOWN = 5.0   # jeda minimal antar retry biar ESP ga di-spam
 
 DEBUG_DIR = "calibration_debug"
@@ -122,6 +122,9 @@ last_activity_time = time.time()
 last_refresh_time = time.time()
 
 detection_start_time = None
+
+last_preset_sent = None
+last_stuck_retry_time = 0.0
 
 print("Sistem siap. Monitoring piringan...")
 print(f"(Buat force-refresh manual dari SSH: touch {REFRESH_FLAG_FILE})\n")
@@ -152,9 +155,6 @@ while True:
     bbox = None
     confidence_mode = "normal"
     triggered = False
-
-    last_preset_sent = None
-    last_stuck_retry_time = 0.0
 
     if change_area > CHANGE_AREA_THRESHOLD:
         if detection_start_time is None:
@@ -342,7 +342,5 @@ while True:
             last_stuck_retry_time = time.time()
 
     prev_gray = gray.copy()
-    time.sleep(0.1)
+    # time.sleep(0.1)
 
-    prev_gray = gray.copy()
-    time.sleep(0.1)

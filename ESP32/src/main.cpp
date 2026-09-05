@@ -6,13 +6,13 @@
 #define SERVO_A_PIN 19
 #define SERVO_B_PIN 18
 
-#define TRIG_PIN 15
-#define ECHO1_PIN 2
-#define ECHO2_PIN 0
+#define TRIG_PIN 27
+#define ECHO1_PIN 26
+#define ECHO2_PIN 25
 #define ECHO3_PIN 4
 #define ECHO4_PIN 16
 
-#define BUZZER_PIN 20
+#define BUZZER_PIN 13
 
 // ===== LCD I2C 2004 (20 kolom x 4 baris) =====
 #define LCD_ADDR 0x27   // kalau layar blank/kotak-kotak, coba 0x3F (alamat umum kedua)
@@ -28,7 +28,7 @@
 #define NUM_ULTRASONIC 4
 #define ULTRASONIC_TIMEOUT_US 25000UL   // ~4m, sesuaikan kalau jarak maksimal beda
 #define ULTRASONIC_SETTLE_MS 50         // jeda antar trigger biar gema sensor sebelumnya reda
-#define ULTRASONIC_READ_INTERVAL_MS 200 // seberapa sering baca ke-4 sensor di loop()
+#define ULTRASONIC_READ_INTERVAL_MS 2000 // seberapa sering baca ke-4 sensor di loop()
 
 const uint8_t echoPins[NUM_ULTRASONIC] = {ECHO1_PIN, ECHO2_PIN, ECHO3_PIN, ECHO4_PIN};
 float distanceCM[NUM_ULTRASONIC] = {-1, -1, -1, -1};
@@ -66,23 +66,44 @@ unsigned long totalSortir = 0;
 unsigned long lastActionTime = 0;
 bool showingIdle = true;
 
+// jarak sensor ke tumpukan sampah saat bin KOSONG (cm) — kalibrasi manual per bin
+float binEmptyCM[NUM_ULTRASONIC] = {30.0, 30.0, 30.0, 30.0};
+
+// jarak sensor ke tumpukan sampah saat bin PENUH (cm) — kalibrasi manual per bin
+float binFullCM[NUM_ULTRASONIC]  = {10.0, 10.0, 10.0, 10.0};
+int distanceToPercent(float distCM, float emptyCM, float fullCM) {
+    if (distCM < 0) return -1;
+
+    float percent = (emptyCM - distCM) / (emptyCM - fullCM) * 100.0f;
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    return (int)percent;
+}
+
 void lcdShowIdle() {
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("WASTE SORTING SYSTEM");
     lcd.setCursor(0, 1);
     lcd.print("READY");
+
+    int pct0 = distanceToPercent(distanceCM[0], binEmptyCM[0], binFullCM[0]);
+    int pct1 = distanceToPercent(distanceCM[1], binEmptyCM[1], binFullCM[1]);
+    int pct2 = distanceToPercent(distanceCM[2], binEmptyCM[2], binFullCM[2]);
+    int pct3 = distanceToPercent(distanceCM[3], binEmptyCM[3], binFullCM[3]);
+
     lcd.setCursor(0, 2);
-    lcd.print("BIN1");
-    lcd.print(distanceCM[0] >= 0 ? String(distanceCM[0], 1) + "cm" : "N/A");
-    lcd.print(" BIN2");
-    lcd.print(distanceCM[1] >= 0 ? String(distanceCM[1], 1) + "cm" : "N/A");
+    lcd.print("BIN1 ");
+    lcd.print(pct0 >= 0 ? String(pct0) + "%" : "N/A");
+    lcd.print(" BIN2 ");
+    lcd.print(pct1 >= 0 ? String(pct1) + "%" : "N/A");
+
     lcd.setCursor(0, 3);
-    lcd.print(" BIN3");
-    lcd.print(distanceCM[2] >= 0 ? String(distanceCM[2], 1) + "cm" : "N/A");
-    lcd.print(" BIN4");
-    lcd.print(distanceCM[3] >= 0 ? String(distanceCM[3], 1) + "cm" : "N/A");
-    lcd.setCursor(0, 3);
+    lcd.print(" BIN3 ");
+    lcd.print(pct2 >= 0 ? String(pct2) + "%" : "N/A");
+    lcd.print(" BIN4 ");
+    lcd.print(pct3 >= 0 ? String(pct3) + "%" : "N/A");
+
     showingIdle = true;
 }
 
@@ -178,67 +199,83 @@ void setup() {
 void loop() {
 
     if (millis() - lastUltrasonicRead > ULTRASONIC_READ_INTERVAL_MS) {
-    readAllUltrasonic();
-    lastUltrasonicRead = millis();
+        readAllUltrasonic();
+        lastUltrasonicRead = millis();
 
-    // contoh debug, hapus/ganti sesuai kebutuhan logika deteksi objek
-    Serial.print("US1:"); Serial.print(distanceCM[0]);
-    Serial.print(" US2:"); Serial.print(distanceCM[1]);
-    Serial.print(" US3:"); Serial.print(distanceCM[2]);
-    Serial.print(" US4:"); Serial.println(distanceCM[3]);
+        // contoh debug, hapus/ganti sesuai kebutuhan logika deteksi objek
+        Serial.print("US1:"); Serial.print(distanceCM[0]);
+        Serial.print(" US2:"); Serial.print(distanceCM[1]);
+        Serial.print(" US3:"); Serial.print(distanceCM[2]);
+        Serial.print(" US4:"); Serial.println(distanceCM[3]);
+            
+        
+        if (showingIdle) {
+        lcdShowIdle();
+        }
+
     }
-    
+
     while (Serial.available() > 0) {
         char c = Serial.read();
 
         if (c == '\n' || c == '\r') {
             if (rxBuffer.length() > 0) {
-                // parsing "idx" biasa, atau "idx,label,confidence" dari Python
-                int comma1 = rxBuffer.indexOf(',');
-                String idxStr = (comma1 == -1) ? rxBuffer : rxBuffer.substring(0, comma1);
-                int idx = idxStr.toInt();
 
-                String label = "";
-                float confidence = 0;
-                bool hasLabel = false;
+                if (rxBuffer == "c") {
+                    readAllUltrasonic();
 
-                if (comma1 != -1) {
-                    int comma2 = rxBuffer.indexOf(',', comma1 + 1);
-                    if (comma2 != -1) {
-                        label = rxBuffer.substring(comma1 + 1, comma2);
-                        confidence = rxBuffer.substring(comma2 + 1).toFloat();
-                        hasLabel = true;
-                    }
-                }
-
-                if (idx >= 0 && idx < NUM_PRESETS) {
-                    if (idx == 0) {
-                        // preset 0: servo A gerak dulu, baru servo B
-                        servoA.write(presets[idx][0]);
-                        delay(SERVO_MOVE_DELAY_MS);
-                        servoB.write(presets[idx][1]);
-                    } else {
-                        // default: servo B gerak dulu, baru servo A
-                        servoB.write(presets[idx][1]);
-                        delay(SERVO_MOVE_DELAY_MS);
-                        servoA.write(presets[idx][0]);
-                    }
-
-                    Serial.print("Preset ");
-                    Serial.print(idx);
-                    Serial.print(" -> A: ");
-                    Serial.print(presets[idx][0]);
-                    Serial.print(", B: ");
-                    Serial.println(presets[idx][1]);
-
-                    // LCD & counter cuma diupdate untuk aksi sortir sungguhan (idx != 0),
-                    // supaya perintah "balik netral" yang dikirim otomatis setelah tiap
-                    // sortir tidak langsung menimpa tampilan hasil di layar.
-                    if (idx != 0) {
-                        lcdShowResult(idx, label, confidence, hasLabel);
-                    }
+                    Serial.print("US1:"); Serial.print(distanceCM[0]);
+                    Serial.print(",US2:"); Serial.print(distanceCM[1]);
+                    Serial.print(",US3:"); Serial.print(distanceCM[2]);
+                    Serial.print(",US4:"); Serial.println(distanceCM[3]);
                 } else {
-                    Serial.println("Preset tidak valid. Gunakan angka 0-5.");
+                    // parsing "idx" biasa, atau "idx,label,confidence" dari Python
+                    int comma1 = rxBuffer.indexOf(',');
+                    String idxStr = (comma1 == -1) ? rxBuffer : rxBuffer.substring(0, comma1);
+                    int idx = idxStr.toInt();
+
+                    String label = "";
+                    float confidence = 0;
+                    bool hasLabel = false;
+
+                    if (comma1 != -1) {
+                        int comma2 = rxBuffer.indexOf(',', comma1 + 1);
+                        if (comma2 != -1) {
+                            label = rxBuffer.substring(comma1 + 1, comma2);
+                            confidence = rxBuffer.substring(comma2 + 1).toFloat();
+                            hasLabel = true;
+                        }
+                    }
+
+                    if (idx >= 0 && idx < NUM_PRESETS) {
+                        if (idx == 0) {
+                            // preset 0: servo A gerak dulu, baru servo B
+                            servoA.write(presets[idx][0]);
+                            delay(SERVO_MOVE_DELAY_MS);
+                            servoB.write(presets[idx][1]);
+                        } else {
+                            // default: servo B gerak dulu, baru servo A
+                            servoB.write(presets[idx][1]);
+                            delay(SERVO_MOVE_DELAY_MS);
+                            servoA.write(presets[idx][0]);
+                        }
+
+                        Serial.print("Preset ");
+                        Serial.print(idx);
+                        Serial.print(" -> A: ");
+                        Serial.print(presets[idx][0]);
+                        Serial.print(", B: ");
+                        Serial.println(presets[idx][1]);
+
+                        // LCD & counter cuma diupdate untuk aksi sortir sungguhan (idx != 0),
+                        // supaya perintah "balik netral" yang dikirim otomatis setelah tiap
+                        // sortir tidak langsung menimpa tampilan hasil di layar.
+                        if (idx != 0) {
+                            lcdShowResult(idx, label, confidence, hasLabel);
+                        }
+                    } else {
+                        Serial.println("Preset tidak valid. Gunakan angka 0-5.");
+                    }
                 }
             }
             rxBuffer = "";
