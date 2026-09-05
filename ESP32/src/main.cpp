@@ -42,7 +42,7 @@ String rxBuffer = "";
 // preset[i] = {sudut servo A, sudut servo B}
 // silakan sesuaikan nilai index 2-5 sesuai kebutuhan
 int presets[NUM_PRESETS][2] = {
-    {90, 90},   // 0 - netral
+    {90, 95},   // 0 - netral
     {0, 25},    // 1 - kertas
     {0, 150},   // 2 - plastik - TODO sesuaikan
     {180, 25},  // 3 - kaleng  - TODO sesuaikan
