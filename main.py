@@ -136,6 +136,12 @@ detection_start_time = None
 last_preset_sent = None
 last_stuck_retry_time = 0.0
 
+current_bbox = None
+next_reclassify_time = None
+
+RECLASSIFY_INTERVAL = 2.0       # seberapa sering cek ulang objek yang lagi di piringan
+STUCK_RESEND_COOLDOWN = 5.0     # jarak minimal antar kirim ulang preset YANG SAMA (biar ga spam ESP)
+
 print("Sistem siap. Monitoring piringan...")
 print(f"(Buat force-refresh manual dari SSH: touch {REFRESH_FLAG_FILE})\n")
 
@@ -177,6 +183,7 @@ while True:
             x, y, w, h = cv2.boundingRect(largest_contour)
             aspect_ratio = w / h if h > 0 else 0
             bbox = (x, y, w, h)
+            current_bbox = bbox
 
             if contour_area >= MIN_CONTOUR_AREA and MIN_ASPECT_RATIO < aspect_ratio < MAX_ASPECT_RATIO:
                 shape_valid = True
@@ -287,6 +294,7 @@ while True:
 
                 object_present = True
                 last_activity_time = time.time()
+                next_reclassify_time = time.time() + RECLASSIFY_INTERVAL
         else:
             normal_stable_count = 0
             immediate_confirm_count = 0
@@ -301,6 +309,8 @@ while True:
         immediate_confirm_count = 0
         detection_start_time = None
         last_preset_sent = None 
+        current_bbox = None  
+        next_reclassify_time = None 
 
     # ===== Refresh: otomatis (timeout) atau manual (file trigger) =====
     time_since_activity = time.time() - last_activity_time
@@ -349,18 +359,56 @@ while True:
             last_activity_time = time.time()
 
         # ===== Retry kalau objek masih nyangkut setelah disortir =====
-    if object_present and last_preset_sent is not None:
-        stuck_duration = time.time() - last_activity_time
-        time_since_retry = time.time() - last_stuck_retry_time
-        if stuck_duration >= STUCK_RETRY_TIMEOUT and time_since_retry >= STUCK_RETRY_COOLDOWN:
-            print(f">>> [STUCK] Objek masih terdeteksi {stuck_duration:.1f}s, kirim ulang preset {last_preset_sent} ke ESP\n")
-            send_to_esp(last_preset_sent)
-            time.sleep(POST_PRESET_DELAY)
-            send_to_esp(0)
-            time.sleep(POST_NEUTRAL_DELAY)
-            last_activity_time = time.time()
-            last_stuck_retry_time = time.time()
+    if object_present and next_reclassify_time is not None and time.time() >= next_reclassify_time:
+        if current_bbox is not None:
+            rx, ry, rw, rh = current_bbox
+            recheck_crop = frame[ry:ry+rh, rx:rx+rw]
+        else:
+            recheck_crop = frame  # fallback kalau bbox somehow kosong
+
+        rc_label, rc_conf, _ = classify(recheck_crop)
+
+        if rc_label == 'background' and rc_conf >= CONFIDENCE_THRESHOLD:
+            print(">>> [RECLASSIFY] Piringan terkonfirmasi kosong, siap terima objek baru.\n")
+            object_present = False
+            last_preset_sent = None
+            current_bbox = None
+            next_reclassify_time = None
+            normal_stable_count = 0
+            immediate_confirm_count = 0
+            detection_start_time = None
+
+        elif rc_conf >= CONFIDENCE_THRESHOLD and rc_label in label_to_preset:
+            rc_preset = label_to_preset[rc_label]
+
+            if rc_preset == last_preset_sent:
+                # objek sama, masih nyangkut -> retry, tapi dibatasi cooldown biar ga spam ESP
+                if time.time() - last_stuck_retry_time >= STUCK_RESEND_COOLDOWN:
+                    print(f">>> [RECLASSIFY] Objek sama ({rc_label}) masih nyangkut, retry preset {rc_preset}\n")
+                    send_to_esp(rc_preset)
+                    time.sleep(POST_PRESET_DELAY)
+                    send_to_esp(0)
+                    time.sleep(POST_NEUTRAL_DELAY)
+                    last_stuck_retry_time = time.time()
+                    last_activity_time = time.time()
+            else:
+                # label beda dari preset terakhir -> ini objek BARU, proses seperti deteksi baru
+                print(f">>> [RECLASSIFY] Objek baru terdeteksi: {rc_label} ({rc_conf*100:.2f}%)\n")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                save_path = os.path.join(CAPTURE_DIR, rc_label, f"{timestamp}.jpg")
+                cv2.imwrite(save_path, recheck_crop)
+                with open(LOG_FILE, 'a', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, rc_label, f"{rc_conf:.4f}", "", "", "", "", ""])
+
+                send_to_esp(rc_preset)
+                time.sleep(POST_PRESET_DELAY)
+                send_to_esp(0)
+                time.sleep(POST_NEUTRAL_DELAY)
+                last_preset_sent = rc_preset
+                last_activity_time = time.time()
+        # else: confidence rendah/ambigu, biarkan, coba lagi di siklus reclassify berikutnya
+
+        next_reclassify_time = time.time() + RECLASSIFY_INTERVAL
 
     prev_gray = gray.copy()
-    # time.sleep(0.1)
-

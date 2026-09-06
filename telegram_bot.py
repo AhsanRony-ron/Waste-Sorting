@@ -1,9 +1,9 @@
-rimport json
+import json
 import os
 import glob
 from telegram.ext import Application
 
-BOT_TOKEN = "8786391966:AAFupAO-71fzxyLBngIymkKOw6R20plcbCo"
+BOT_TOKEN = "8786391966:AAEK7OxPSquJyaj86Pswk83Qso6IoJnkNV0"
 CHAT_ID = "6738178793"
 
 EVENTS_DIR = "telegram_sync/events"
