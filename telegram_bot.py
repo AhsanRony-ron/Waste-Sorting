@@ -115,8 +115,13 @@ def handle_sort_result(data):
     caption = (
         f"Jenis: {data['label']}\n"
         f"Confidence: {data['confidence']*100:.1f}%\n"
-        f"Total waktu: {data.get('total_ms', '-')} ms"
+        f"Total waktu: {data.get('total_ms', '-')} ms\n\n"
+        f"*Detail semua kelas:*\n"
     )
+    all_scores = data.get("all_scores", {})
+    for cname, score in sorted(all_scores.items(), key=lambda x: x[1], reverse=True):
+        caption += f"  {cname}: {score*100:.1f}%\n"
+
     return caption, data.get("image_path")
  
  

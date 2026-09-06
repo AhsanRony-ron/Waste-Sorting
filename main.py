@@ -374,6 +374,7 @@ while True:
                     "detection_ms": round(detection_duration * 1000, 2),
                     "inference_ms": round(infer_duration * 1000, 2),
                     "total_ms": round(total_duration * 1000, 2),
+                    "all_scores": {cname: float(all_scores[i]) for i, cname in enumerate(class_names)},  # tambahan
                 })
 
                 print(f"\n>>> STABIL & VALID [{confidence_mode}] -> disimpan {save_path}")
