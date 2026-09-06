@@ -5,7 +5,8 @@ import os
 import serial
 import csv
 import json
-import time as _time
+import glob
+import uuid
 from datetime import datetime
 from ai_edge_litert.interpreter import Interpreter
 
@@ -75,8 +76,19 @@ def send_to_esp(preset_idx, max_read_lines=20, read_timeout=2.0):
     ser.write(cmd.encode())
     time.sleep(0.3)
 
+
+# ===================== Sinkronisasi Telegram (file-based queue) =====================
+
 EVENTS_DIR = "telegram_sync/events"
+COMMANDS_DIR = "telegram_sync/commands"
+COMMANDS_DONE_DIR = "telegram_sync/commands_done"
+DEBUG_CAPTURE_DIR = "debug_captures"
+
 os.makedirs(EVENTS_DIR, exist_ok=True)
+os.makedirs(COMMANDS_DIR, exist_ok=True)
+os.makedirs(COMMANDS_DONE_DIR, exist_ok=True)
+os.makedirs(DEBUG_CAPTURE_DIR, exist_ok=True)
+
 
 def write_event(event_type, data):
     fname = f"{time.time_ns()}.json"
@@ -86,15 +98,114 @@ def write_event(event_type, data):
         json.dump({"type": event_type, "data": data}, f)
     os.rename(tmp_path, final_path)
 
+
+paused = False
+
 PING_INTERVAL = 1.0
 last_ping_sent = 0
+
 
 def send_ping():
     global last_ping_sent
     if time.time() - last_ping_sent >= PING_INTERVAL:
         ser.write(b"PING\n")
         last_ping_sent = time.time()
-        
+
+
+def handle_camera_check(cmd, frame):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    path = os.path.join(DEBUG_CAPTURE_DIR, f"{timestamp}.jpg")
+    cv2.imwrite(path, frame)  # frame mentah, TANPA crop/resize
+    write_event("command_result", {
+        "command_id": cmd["id"], "command": "camera_check", "chat_id": cmd["chat_id"],
+        "success": True, "message": "Posisi kamera saat ini", "image_path": path
+    })
+
+
+def handle_pause(cmd):
+    global paused
+    paused = True
+    write_event("command_result", {
+        "command_id": cmd["id"], "command": "pause", "chat_id": cmd["chat_id"],
+        "success": True, "message": "Sistem dijeda"
+    })
+
+
+def handle_resume(cmd):
+    global paused
+    paused = False
+    write_event("command_result", {
+        "command_id": cmd["id"], "command": "resume", "chat_id": cmd["chat_id"],
+        "success": True, "message": "Sistem dilanjutkan"
+    })
+
+
+def handle_manual_preset(cmd):
+    preset = cmd["params"].get("preset")
+    if preset is None or not (0 <= preset <= 5):
+        write_event("command_result", {
+            "command_id": cmd["id"], "command": "manual_preset", "chat_id": cmd["chat_id"],
+            "success": False, "message": "Preset tidak valid (0-5)"
+        })
+        return
+    send_to_esp(preset)
+    write_event("command_result", {
+        "command_id": cmd["id"], "command": "manual_preset", "chat_id": cmd["chat_id"],
+        "success": True, "message": f"Preset {preset} terkirim ke ESP"
+    })
+
+
+def handle_refresh_reference(cmd):
+    open(REFRESH_FLAG_FILE, 'w').close()
+    write_event("command_result", {
+        "command_id": cmd["id"], "command": "refresh_reference", "chat_id": cmd["chat_id"],
+        "success": True, "message": "Refresh referensi dijadwalkan"
+    })
+
+
+def handle_status(cmd):
+    write_event("command_result", {
+        "command_id": cmd["id"], "command": "status", "chat_id": cmd["chat_id"], "success": True,
+        "message": (
+            f"Paused: {paused}\n"
+            f"Object present: {object_present}\n"
+            f"Last preset: {last_preset_sent}"
+        )
+    })
+
+
+COMMAND_HANDLERS = {
+    "camera_check": handle_camera_check,  # butuh frame, ditangani khusus di poll_commands
+    "pause": handle_pause,
+    "resume": handle_resume,
+    "manual_preset": handle_manual_preset,
+    "refresh_reference": handle_refresh_reference,
+    "status": handle_status,
+}
+
+
+def poll_commands(frame):
+    for path in sorted(glob.glob(os.path.join(COMMANDS_DIR, "*.json"))):
+        try:
+            with open(path) as f:
+                cmd = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        handler = COMMAND_HANDLERS.get(cmd["command"])
+        if handler is None:
+            write_event("command_result", {
+                "command_id": cmd["id"], "command": cmd["command"], "chat_id": cmd.get("chat_id"),
+                "success": False, "message": "Command tidak dikenal"
+            })
+        elif cmd["command"] == "camera_check":
+            handler(cmd, frame)
+        else:
+            handler(cmd)
+
+        os.rename(path, os.path.join(COMMANDS_DONE_DIR, os.path.basename(path)))
+
+
 # ===== Parameter dasar frame diff =====
 DIFF_THRESHOLD = 20
 CHANGE_AREA_THRESHOLD = 8000
@@ -106,7 +217,7 @@ STABLE_FRAMES_NEEDED_NORMAL = 10
 MOTION_TOLERANCE_NORMAL = 100  # dinaikkan, biar goyangan wajar plastik tidak reset terus
 
 IMMEDIATE_CAPTURE_AREA_RATIO = 0.10  # diturunkan, biar kontur sedang pun bisa immediate
-IMMEDIATE_CONFIRM_FRAMES = 10
+IMMEDIATE_CONFIRM_FRAMES = 20
 
 FORCE_REFRESH_TIMEOUT = 20.0
 REFRESH_COOLDOWN = 30.0
@@ -114,8 +225,8 @@ REFRESH_COOLDOWN = 30.0
 POST_PRESET_DELAY = 2.0
 POST_NEUTRAL_DELAY = 1.5
 
-STUCK_RETRY_TIMEOUT = 2.0    # detik objek masih nyangkut sebelum coba gerak ulang
-STUCK_RETRY_COOLDOWN = 5.0   # jeda minimal antar retry biar ESP ga di-spam
+RECLASSIFY_INTERVAL = 2.0       # seberapa sering cek ulang objek yang lagi di piringan
+STUCK_RESEND_COOLDOWN = 5.0     # jarak minimal antar kirim ulang preset YANG SAMA (biar ga spam ESP)
 
 DEBUG_DIR = "calibration_debug"
 os.makedirs(DEBUG_DIR, exist_ok=True)
@@ -148,9 +259,6 @@ last_stuck_retry_time = 0.0
 current_bbox = None
 next_reclassify_time = None
 
-RECLASSIFY_INTERVAL = 2.0       # seberapa sering cek ulang objek yang lagi di piringan
-STUCK_RESEND_COOLDOWN = 5.0     # jarak minimal antar kirim ulang preset YANG SAMA (biar ga spam ESP)
-
 print("Sistem siap. Monitoring piringan...")
 print(f"(Buat force-refresh manual dari SSH: touch {REFRESH_FLAG_FILE})\n")
 
@@ -160,8 +268,15 @@ while True:
         print("Gagal capture frame")
         continue
 
+    send_ping()
+    poll_commands(frame)
+
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (25, 25), 0)
+
+    if paused:
+        prev_gray = gray.copy()  # tetap update biar gak ada lonjakan diff pas resume
+        continue
 
     diff_ref = cv2.absdiff(reference_gray, gray)
     thresh_ref = cv2.threshold(diff_ref, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)[1]
@@ -180,8 +295,6 @@ while True:
     bbox = None
     confidence_mode = "normal"
     triggered = False
-
-    send_ping()
 
     if change_area > CHANGE_AREA_THRESHOLD:
         if detection_start_time is None:
@@ -254,13 +367,13 @@ while True:
                 cv2.imwrite(save_path, cropped_object)
 
                 write_event("sort_result", {
-                "timestamp": timestamp,
-                "label": label,
-                "confidence": float(confidence),
-                "image_path": save_path,
-                "detection_ms": round(detection_duration*1000, 2),
-                "inference_ms": round(infer_duration*1000, 2),
-                "total_ms": round(total_duration*1000, 2)
+                    "timestamp": timestamp,
+                    "label": label,
+                    "confidence": float(confidence),
+                    "image_path": save_path,
+                    "detection_ms": round(detection_duration * 1000, 2),
+                    "inference_ms": round(infer_duration * 1000, 2),
+                    "total_ms": round(total_duration * 1000, 2),
                 })
 
                 print(f"\n>>> STABIL & VALID [{confidence_mode}] -> disimpan {save_path}")
@@ -292,16 +405,16 @@ while True:
                     time.sleep(POST_NEUTRAL_DELAY)
 
                 elif label == 'background':
-                    # ===== BARU: background terkonfirmasi saat siklus normal, ESP diam, =====
-                    # ===== tapi langsung pakai frame ini sebagai referensi baru tanpa tunggu timeout =====
+                    # background terkonfirmasi saat siklus normal, ESP diam,
+                    # langsung pakai frame ini sebagai referensi baru tanpa tunggu timeout
                     print(f"    -> Terdeteksi background, tidak ada aksi ke ESP")
                     print(f"    -> Langsung update referensi dari frame ini (background terkonfirmasi)\n")
                     reference_gray = gray.copy()
                     last_refresh_time = time.time()
-                    last_preset_sent = None 
+                    last_preset_sent = None
                 else:
                     print(f"    -> Confidence rendah / kelas tidak disortir, TIDAK kirim ke ESP\n")
-                    last_preset_sent = None 
+                    last_preset_sent = None
 
                 object_present = True
                 last_activity_time = time.time()
@@ -319,11 +432,11 @@ while True:
         normal_stable_count = 0
         immediate_confirm_count = 0
         detection_start_time = None
-        last_preset_sent = None 
-        current_bbox = None  
-        next_reclassify_time = None 
+        last_preset_sent = None
+        current_bbox = None
+        next_reclassify_time = None
 
-    # ===== Refresh: otomatis (timeout) atau manual (file trigger) =====
+    # ===== Refresh: otomatis (timeout) atau manual (file trigger, termasuk dari Telegram) =====
     time_since_activity = time.time() - last_activity_time
     time_since_last_refresh = time.time() - last_refresh_time
 
@@ -339,7 +452,7 @@ while True:
         if manual_refresh_requested:
             os.remove(REFRESH_FLAG_FILE)
 
-        # ===== BARU: sebelum commit sebagai referensi, verifikasi dulu ini benar background =====
+        # sebelum commit sebagai referensi, verifikasi dulu ini benar background
         check_label, check_confidence, check_scores = classify(frame)
 
         if check_label == 'background' and check_confidence >= CONFIDENCE_THRESHOLD:
@@ -369,7 +482,7 @@ while True:
             last_refresh_time = time.time()  # tetap update supaya tidak spam retry tiap frame
             last_activity_time = time.time()
 
-        # ===== Retry kalau objek masih nyangkut setelah disortir =====
+    # ===== Reclassify berkala selama objek masih dianggap ada (bedakan stuck vs objek baru) =====
     if object_present and next_reclassify_time is not None and time.time() >= next_reclassify_time:
         if current_bbox is not None:
             rx, ry, rw, rh = current_bbox

@@ -30,7 +30,7 @@
 #define ULTRASONIC_SETTLE_MS 50         // jeda antar trigger biar gema sensor sebelumnya reda
 #define ULTRASONIC_READ_INTERVAL_MS 2000 // seberapa sering baca ke-4 sensor di loop()
 
-#define PI_TIMEOUT_MS 3000
+#define PI_TIMEOUT_MS 5000
 unsigned long lastPingFromPi = 0;
 bool piOnline = false;
 bool piOnlinePrev = false;
