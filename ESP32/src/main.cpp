@@ -30,6 +30,11 @@
 #define ULTRASONIC_SETTLE_MS 50         // jeda antar trigger biar gema sensor sebelumnya reda
 #define ULTRASONIC_READ_INTERVAL_MS 2000 // seberapa sering baca ke-4 sensor di loop()
 
+#define PI_TIMEOUT_MS 3000
+unsigned long lastPingFromPi = 0;
+bool piOnline = false;
+bool piOnlinePrev = false;
+
 const uint8_t echoPins[NUM_ULTRASONIC] = {ECHO1_PIN, ECHO2_PIN, ECHO3_PIN, ECHO4_PIN};
 float distanceCM[NUM_ULTRASONIC] = {-1, -1, -1, -1};
 unsigned long lastUltrasonicRead = 0;
@@ -85,7 +90,8 @@ void lcdShowIdle() {
     lcd.setCursor(0, 0);
     lcd.print("WASTE SORTING SYSTEM");
     lcd.setCursor(0, 1);
-    lcd.print("READY");
+    lcd.print("READY   PI:");
+    lcd.print(piOnline ? "OK " : "OFF");;
 
     int pct0 = distanceToPercent(distanceCM[0], binEmptyCM[0], binFullCM[0]);
     int pct1 = distanceToPercent(distanceCM[1], binEmptyCM[1], binFullCM[1]);
@@ -99,7 +105,7 @@ void lcdShowIdle() {
     lcd.print(pct1 >= 0 ? String(pct1) + "%" : "N/A");
 
     lcd.setCursor(0, 3);
-    lcd.print(" BIN3 ");
+    lcd.print("BIN3 ");
     lcd.print(pct2 >= 0 ? String(pct2) + "%" : "N/A");
     lcd.print(" BIN4 ");
     lcd.print(pct3 >= 0 ? String(pct3) + "%" : "N/A");
@@ -164,6 +170,17 @@ void readAllUltrasonic() {
     }
 }
 
+void buzzBeep(int times, int onMs = 100, int gapMs = 100) {
+    for (int i = 0; i < times; i++) {
+        digitalWrite(BUZZER_PIN, HIGH);
+        delay(onMs);
+        digitalWrite(BUZZER_PIN, LOW);
+        if (i < times - 1) {
+            delay(gapMs);
+        }
+    }
+}
+
 void setup() {
     Serial.begin(115200);
 
@@ -215,11 +232,28 @@ void loop() {
 
     }
 
+    piOnline = (millis() - lastPingFromPi) < PI_TIMEOUT_MS;
+
+    if (piOnline != piOnlinePrev) {
+        if (piOnline) {
+            buzzBeep(2);   // Pi baru konek/kembali online -> 2x bip
+        } else {
+            buzzBeep(1, 300);   // Pi disconnect -> 1x bip
+        }
+        piOnlinePrev = piOnline;
+    }
+
     while (Serial.available() > 0) {
         char c = Serial.read();
 
         if (c == '\n' || c == '\r') {
             if (rxBuffer.length() > 0) {
+
+                // di dalam blok parsing rxBuffer, sejajar sama `if (rxBuffer == "c")`:
+                if (rxBuffer == "PING") {
+                    lastPingFromPi = millis();
+                    // gak perlu proses lain, cuma nandain Pi masih hidup
+                }
 
                 if (rxBuffer == "c") {
                     readAllUltrasonic();
@@ -228,6 +262,7 @@ void loop() {
                     Serial.print(",US2:"); Serial.print(distanceCM[1]);
                     Serial.print(",US3:"); Serial.print(distanceCM[2]);
                     Serial.print(",US4:"); Serial.println(distanceCM[3]);
+                    
                 } else {
                     // parsing "idx" biasa, atau "idx,label,confidence" dari Python
                     int comma1 = rxBuffer.indexOf(',');

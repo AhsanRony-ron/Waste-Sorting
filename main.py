@@ -86,6 +86,15 @@ def write_event(event_type, data):
         json.dump({"type": event_type, "data": data}, f)
     os.rename(tmp_path, final_path)
 
+PING_INTERVAL = 1.0
+last_ping_sent = 0
+
+def send_ping():
+    global last_ping_sent
+    if time.time() - last_ping_sent >= PING_INTERVAL:
+        ser.write(b"PING\n")
+        last_ping_sent = time.time()
+        
 # ===== Parameter dasar frame diff =====
 DIFF_THRESHOLD = 20
 CHANGE_AREA_THRESHOLD = 8000
