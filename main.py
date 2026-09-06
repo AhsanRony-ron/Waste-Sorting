@@ -4,6 +4,8 @@ import time
 import os
 import serial
 import csv
+import json
+import time as _time
 from datetime import datetime
 from ai_edge_litert.interpreter import Interpreter
 
@@ -20,8 +22,16 @@ if not os.path.exists(LOG_FILE):
 
 # ===== Setup serial ke ESP =====
 SERIAL_PORT = '/dev/ttyUSB0'
+
+_tmp = serial.Serial(SERIAL_PORT, 115200, timeout=1)
+time.sleep(0.3)
+_tmp.close()
+time.sleep(0.5)
+
 ser = serial.Serial(SERIAL_PORT, 115200, timeout=1)
 time.sleep(2)
+ser.reset_input_buffer()
+ser.reset_output_buffer()
 
 # ===== Setup model =====
 interpreter = Interpreter(model_path="waste_classifier.tflite")
@@ -65,16 +75,16 @@ def send_to_esp(preset_idx, max_read_lines=20, read_timeout=2.0):
     ser.write(cmd.encode())
     time.sleep(0.3)
 
-    start = time.time()
-    lines_read = 0
-    while ser.in_waiting > 0:
-        response = ser.readline()
-        print("ESP:", response.decode(errors='ignore').strip())
-        lines_read += 1
-        if lines_read >= max_read_lines or (time.time() - start) > read_timeout:
-            print("    [WARNING] Berhenti baca respons ESP (batas lines/timeout tercapai).")
-            break
+EVENTS_DIR = "telegram_sync/events"
+os.makedirs(EVENTS_DIR, exist_ok=True)
 
+def write_event(event_type, data):
+    fname = f"{time.time_ns()}.json"
+    tmp_path = os.path.join(EVENTS_DIR, f".tmp_{fname}")
+    final_path = os.path.join(EVENTS_DIR, fname)
+    with open(tmp_path, 'w') as f:
+        json.dump({"type": event_type, "data": data}, f)
+    os.rename(tmp_path, final_path)
 
 # ===== Parameter dasar frame diff =====
 DIFF_THRESHOLD = 20
@@ -224,6 +234,16 @@ while True:
                 else:
                     save_path = os.path.join(CAPTURE_DIR, "unknown", f"{timestamp}_{label}_{confidence:.2f}.jpg")
                 cv2.imwrite(save_path, cropped_object)
+
+                write_event("sort_result", {
+                "timestamp": timestamp,
+                "label": label,
+                "confidence": float(confidence),
+                "image_path": save_path,
+                "detection_ms": round(detection_duration*1000, 2),
+                "inference_ms": round(infer_duration*1000, 2),
+                "total_ms": round(total_duration*1000, 2)
+                })
 
                 print(f"\n>>> STABIL & VALID [{confidence_mode}] -> disimpan {save_path}")
                 print(f"    Prediksi: {label} ({confidence*100:.2f}%)")
