@@ -181,6 +181,8 @@ while True:
     confidence_mode = "normal"
     triggered = False
 
+    send_ping()
+
     if change_area > CHANGE_AREA_THRESHOLD:
         if detection_start_time is None:
             detection_start_time = time.perf_counter()
