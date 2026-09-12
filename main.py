@@ -354,6 +354,7 @@ def apply_camera_config():
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
     set_and_verify(cv2.CAP_PROP_FRAME_WIDTH, cam["frame_width"], "frame_width")
     set_and_verify(cv2.CAP_PROP_FRAME_HEIGHT, cam["frame_height"], "frame_height")
+    set_and_verify(cv2.CAP_PROP_FPS, cam["target_fps"], "target_fps")
     set_and_verify(cv2.CAP_PROP_AUTO_EXPOSURE, cam["auto_exposure"], "auto_exposure")
     set_and_verify(cv2.CAP_PROP_EXPOSURE, cam["exposure_time_absolute"], "exposure_time_absolute")
     set_and_verify(cv2.CAP_PROP_AUTO_WB, cam["auto_wb"], "white_balance_automatic")

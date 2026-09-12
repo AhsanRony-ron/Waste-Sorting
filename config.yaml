@@ -13,7 +13,8 @@ camera:
   frame_width: 1920
   frame_height: 1080
   auto_exposure: 1          # 1 = Manual Mode (punya webcam UGREEN kamu)
-  exposure_time_absolute: 1000   # range 1-5000, default pabrik 157
+  target_fps: 30
+  exposure_time_absolute: 300   # range 1-5000, default pabrik 157
   auto_wb: 1                # 0 = OFF (manual).
   wb_temperature: 4600      # range 2800-6500, aktif hanya kalau auto_wb: 0
   brightness: 20             # range -64..64

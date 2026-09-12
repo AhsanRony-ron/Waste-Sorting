@@ -165,6 +165,12 @@ print("Ambil frame referensi dalam 3 detik, pastikan area kosong...")
 time.sleep(3)
 
 ret, reference = cap.read()
+
+print("Resolusi aktual:", reference.shape)
+print("FPS setting:", cap.get(cv2.CAP_PROP_FPS))
+print("Exposure aktual:", cap.get(cv2.CAP_PROP_EXPOSURE))
+print("Backend:", cap.getBackendName())
+
 reference = preprocess_frame(reference)
 
 blur_k = CONFIG["preprocessing"]["gaussian_blur_kernel"]
