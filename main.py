@@ -7,6 +7,7 @@ import csv
 import json
 import glob
 import yaml
+from collections import deque
 from datetime import datetime
 from ai_edge_litert.interpreter import Interpreter
 
@@ -254,14 +255,46 @@ def handle_refresh_reference(cmd):
         "success": True, "message": "Refresh referensi dijadwalkan"
     })
 
+# ===== FPS kamera & suhu prosesor (buat /status) =====
+
+_frame_times = deque(maxlen=30)  # rolling window 30 frame terakhir
+current_fps = 0.0
+
+
+def update_fps():
+    global current_fps
+    now = time.time()
+    _frame_times.append(now)
+    if len(_frame_times) >= 2:
+        elapsed = _frame_times[-1] - _frame_times[0]
+        if elapsed > 0:
+            current_fps = (len(_frame_times) - 1) / elapsed
+
+
+def get_cpu_temp():
+    """
+    Baca suhu CPU dari sysfs. File berisi suhu dalam milli-Celsius,
+    dibagi 1000 buat dapet Celsius biasa. Return None kalau file
+    gak ada (misal bukan Raspberry Pi / board ARM Linux).
+    """
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            return int(f.read().strip()) / 1000.0
+    except (OSError, ValueError):
+        return None
 
 def handle_status(cmd):
+    cpu_temp = get_cpu_temp()
+    cpu_temp_str = f"{cpu_temp:.1f}°C" if cpu_temp is not None else "N/A (bukan Raspberry Pi?)"
+
     write_event("command_result", {
         "command_id": cmd["id"], "command": "status", "chat_id": cmd["chat_id"], "success": True,
         "message": (
             f"Paused: {paused}\n"
             f"Object present: {object_present}\n"
-            f"Last preset: {last_preset_sent}"
+            f"Last preset: {last_preset_sent}\n"
+            f"FPS kamera: {current_fps:.1f}\n"
+            f"Suhu prosesor: {cpu_temp_str}"
         )
     })
 
@@ -373,6 +406,8 @@ while True:
     if not ret:
         print("Gagal capture frame")
         continue
+
+    update_fps()
 
     frame = preprocess_frame(raw_frame)
 
