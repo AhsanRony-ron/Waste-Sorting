@@ -188,8 +188,9 @@ def send_ping():
 
 
 def handle_camera_check(cmd, frame):
-    # frame mentah (sebelum crop/koreksi warna), biar posisi kamera fisik
-    # tetap kelihatan apa adanya untuk keperluan penyesuaian.
+    # frame yang sudah di-preprocess (crop + koreksi warna), sama persis
+    # dengan yang dipakai untuk klasifikasi -- biar bisa cek framing &
+    # hasil koreksi warna, bukan cuma posisi kamera mentah.
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     path = os.path.join(DEBUG_CAPTURE_DIR, f"{timestamp}.jpg")
     cv2.imwrite(path, frame)
@@ -294,7 +295,7 @@ STABLE_FRAMES_NEEDED_NORMAL = 10
 MOTION_TOLERANCE_NORMAL = 100  # dinaikkan, biar goyangan wajar plastik tidak reset terus
 
 IMMEDIATE_CAPTURE_AREA_RATIO = 0.10  # diturunkan, biar kontur sedang pun bisa immediate
-IMMEDIATE_CONFIRM_FRAMES = 20
+IMMEDIATE_CONFIRM_FRAMES = 10
 
 FORCE_REFRESH_TIMEOUT = 20.0
 REFRESH_COOLDOWN = 30.0
@@ -320,12 +321,12 @@ def set_and_verify(prop, value, name):
 set_and_verify(cv2.CAP_PROP_AUTO_EXPOSURE, 1, "auto_exposure")
 # exposure_time_absolute range asli: 1-5000. Default pabrik 157 (jauh dari 5000).
 # MULAI dari sini, lalu tuning naik/turun sambil lihat live feed.
-set_and_verify(cv2.CAP_PROP_EXPOSURE, 157, "exposure_time_absolute")
+set_and_verify(cv2.CAP_PROP_EXPOSURE, 500, "exposure_time_absolute")
 
 
 # --- White balance manual ---
 # white_balance_automatic: 0 = OFF (harus 0, BUKAN 1)
-set_and_verify(cv2.CAP_PROP_AUTO_WB, 0, "white_balance_automatic")
+set_and_verify(cv2.CAP_PROP_AUTO_WB, 1, "white_balance_automatic")
 # white_balance_temperature baru bisa di-set setelah auto WB off. Range: 2800-6500
 set_and_verify(cv2.CAP_PROP_WB_TEMPERATURE, 4600, "white_balance_temperature")
 
