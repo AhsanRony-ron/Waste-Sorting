@@ -36,14 +36,14 @@ preprocessing:
 # --- Deteksi perubahan / frame diff ---
 # Dibaca ulang tiap frame, langsung berubah tanpa restart.
 detection:
-  diff_threshold: 10
+  diff_threshold: 20
   change_area_threshold: 8000
   min_contour_area: 10000
   min_aspect_ratio: 0.2
   max_aspect_ratio: 5.0
-  stable_frames_needed_normal: 10
-  motion_tolerance_normal: 100
-  immediate_capture_area_ratio: 0.10
+  stable_frames_needed_normal: 5
+  motion_tolerance_normal: 50000
+  immediate_capture_area_ratio: 0.30
   immediate_confirm_frames: 10
 
 # --- Refresh reference frame (otomatis / manual) ---

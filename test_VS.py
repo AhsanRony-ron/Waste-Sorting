@@ -2,64 +2,58 @@ import cv2
 import numpy as np
 import time
 import os
+import yaml
 from datetime import datetime
 import tensorflow as tf
 
 # =============================================================
-# KONFIGURASI
+# KONFIGURASI (dibaca dari config.yaml yang SAMA dengan program raspi)
 # =============================================================
+# CATATAN: bagian KAMERA sengaja TIDAK diambil dari config.yaml -- script
+# ini jalan di Windows/laptop (exposure -4 = skala DirectShow), sedangkan
+# config.yaml['camera'] ditujukan buat webcam UGREEN di raspi lewat V4L2
+# (backend Linux, tidak ada di Windows). Kalau dipaksa sama, program ini
+# bakal rusak/gagal buka kamera.
 
-# --- Model ---
-MODEL_PATH = "waste_classifier.tflite"
-CLASS_NAMES = ['background', 'daun', 'kaleng', 'kertas', 'plastik']
-LABEL_TO_PRESET = {
-    'kertas': 1,
-    'plastik': 2,
-    'kaleng': 3,
-    'daun': 4,
-}
-CONFIDENCE_THRESHOLD = 0.6
-
-# --- Crop kamera (resolusi custom, tidak harus persegi) ---
-# Set None jika tidak ingin crop pada dimensi tersebut (pakai penuh).
-CROP_WIDTH = 900     # contoh: lebar area crop di tengah
-CROP_HEIGHT = 600    # contoh: tinggi area crop di tengah
-CROP_OFFSET_X = 0    # geser titik tengah crop secara horizontal (px), + ke kanan
-CROP_OFFSET_Y = 0    # geser titik tengah crop secara vertikal (px), + ke bawah
-
-# --- Koreksi warna otomatis (gray world) ---
-# Menstabilkan warna/saturasi saat cahaya ambient berubah, tanpa
-# mengandalkan auto white balance kamera yang sering "meloncat".
-ENABLE_COLOR_CORRECTION = True
-COLOR_GAIN_MIN = 0.6   # batas bawah gain per channel, cegah overcorrect
-COLOR_GAIN_MAX = 1.6   # batas atas gain per channel, cegah overcorrect
-
-# --- Direktori penyimpanan hasil capture ---
-CAPTURE_DIR = "captured_data"
-
-# --- Parameter deteksi perubahan (frame diff) ---
-DIFF_THRESHOLD = 20
-CHANGE_AREA_THRESHOLD = 8000
-MIN_CONTOUR_AREA = 10000
-MIN_ASPECT_RATIO = 0.2
-MAX_ASPECT_RATIO = 5.0
-
-STABLE_FRAMES_NEEDED_NORMAL = 10
-MOTION_TOLERANCE_NORMAL = 100  # dinaikkan, biar goyangan wajar plastik tidak reset terus
-
-IMMEDIATE_CAPTURE_AREA_RATIO = 0.10
-IMMEDIATE_CONFIRM_FRAMES = 20
-
-FORCE_REFRESH_TIMEOUT = 20.0
-REFRESH_COOLDOWN = 30.0
-
-DEBUG_DIR = "calibration_debug"
-REFRESH_FLAG_FILE = "refresh_now.flag"
+CONFIG_PATH = "config.yaml"
+CONFIG = {}
+_config_mtime = 0
 
 
-# =============================================================
-# UTIL: CROP TENGAH DENGAN RESOLUSI CUSTOM
-# =============================================================
+def load_config():
+    global CONFIG, _config_mtime
+    with open(CONFIG_PATH) as f:
+        CONFIG = yaml.safe_load(f)
+    _config_mtime = os.path.getmtime(CONFIG_PATH)
+
+
+def reload_config_if_changed():
+    """
+    Cek mtime config.yaml tiap loop. Berguna buat debug: bisa tuning
+    crop/threshold di config.yaml sambil live feed jalan, tanpa restart.
+    """
+    global _config_mtime
+    try:
+        mtime = os.path.getmtime(CONFIG_PATH)
+    except OSError:
+        return False
+    if mtime != _config_mtime:
+        load_config()
+        print(">>> [CONFIG] config.yaml berubah, direload.\n")
+        return True
+    return False
+
+
+load_config()
+
+# --- Model (path & class_names dipakai sekali saat load) ---
+MODEL_PATH = CONFIG["model"]["path"]
+CLASS_NAMES = CONFIG["model"]["class_names"]
+
+# --- Path (dipakai sekali saat startup) ---
+CAPTURE_DIR = CONFIG["paths"]["capture_dir"]
+DEBUG_DIR = CONFIG["paths"]["debug_dir"]
+
 
 def crop_center(frame, width=None, height=None, offset_x=0, offset_y=0):
     """
@@ -84,10 +78,6 @@ def crop_center(frame, width=None, height=None, offset_x=0, offset_y=0):
 
     return frame[y1:y2, x1:x2]
 
-
-# =============================================================
-# UTIL: KOREKSI WARNA (GRAY WORLD ASSUMPTION)
-# =============================================================
 
 def gray_world_correction(frame, gain_min=0.6, gain_max=1.6):
     """
@@ -114,10 +104,12 @@ def gray_world_correction(frame, gain_min=0.6, gain_max=1.6):
 
 
 def preprocess_frame(raw_frame):
-    """Crop + koreksi warna, dipakai konsisten di semua titik pengambilan frame."""
-    f = crop_center(raw_frame, CROP_WIDTH, CROP_HEIGHT, CROP_OFFSET_X, CROP_OFFSET_Y)
-    if ENABLE_COLOR_CORRECTION:
-        f = gray_world_correction(f, COLOR_GAIN_MIN, COLOR_GAIN_MAX)
+    """Crop + koreksi warna, parameter dibaca live dari CONFIG (sama dgn raspi)."""
+    pp = CONFIG["preprocessing"]
+    f = crop_center(raw_frame, pp["crop_width"], pp["crop_height"],
+                     pp["crop_offset_x"], pp["crop_offset_y"])
+    if pp["enable_color_correction"]:
+        f = gray_world_correction(f, pp["color_gain_min"], pp["color_gain_max"])
     return f
 
 
@@ -154,6 +146,8 @@ def classify(cropped_bgr):
 # =============================================================
 # INISIALISASI KAMERA & REFERENCE FRAME
 # =============================================================
+# Bagian ini SENGAJA tidak diambil dari config.yaml -- lihat catatan di atas.
+# Kalau mau tuning nilai di bawah, edit langsung di sini (bukan config.yaml).
 
 cap = cv2.VideoCapture(0)
 
@@ -161,7 +155,7 @@ cap = cv2.VideoCapture(0)
 # Mencegah kamera "meloncat" mengubah exposure/warna sendiri.
 # Sisa variasi cahaya ditangani software lewat gray_world_correction() di atas.
 cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)   # 1 = manual mode (0.25 di beberapa driver Windows/DirectShow)
-cap.set(cv2.CAP_PROP_EXPOSURE, -4)       # sesuaikan nilai sesuai kondisi lighting-mu
+cap.set(cv2.CAP_PROP_EXPOSURE, -5)       # sesuaikan nilai sesuai kondisi lighting-mu
 
 cap.set(cv2.CAP_PROP_AUTO_WB, 1)         # matikan auto white balance
 cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 500)  # kunci di suhu warna tertentu (Kelvin)
@@ -177,11 +171,12 @@ time.sleep(3)
 
 ret, reference = cap.read()
 reference = preprocess_frame(reference)
+
+blur_k = CONFIG["preprocessing"]["gaussian_blur_kernel"]
 reference_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
-reference_gray = cv2.GaussianBlur(reference_gray, (25, 25), 0)
+reference_gray = cv2.GaussianBlur(reference_gray, (blur_k, blur_k), 0)
 
 frame_area = reference_gray.shape[0] * reference_gray.shape[1]
-IMMEDIATE_CAPTURE_AREA_THRESHOLD = frame_area * IMMEDIATE_CAPTURE_AREA_RATIO
 
 prev_gray = reference_gray.copy()
 normal_stable_count = 0
@@ -190,8 +185,10 @@ object_present = False
 last_activity_time = time.time()
 last_refresh_time = time.time()
 detection_start_time = None
+prev_frame_time = time.time()
 
-print("Sistem siap (mode debug, TANPA serial ESP). Tekan 'r' refresh manual, 'q' keluar.\n")
+print("Sistem siap (mode debug, TANPA serial ESP). Tekan 'r' refresh manual, 'q' keluar.")
+print("(Ubah config.yaml kapan saja -- otomatis di-reload, kecuali parameter kamera)\n")
 
 
 # =============================================================
@@ -199,6 +196,15 @@ print("Sistem siap (mode debug, TANPA serial ESP). Tekan 'r' refresh manual, 'q'
 # =============================================================
 
 while True:
+    reload_config_if_changed()
+
+    det = CONFIG["detection"]
+    blur_k = CONFIG["preprocessing"]["gaussian_blur_kernel"]
+    confidence_threshold = CONFIG["model"]["confidence_threshold"]
+    label_to_preset = CONFIG["model"]["label_to_preset"]
+    refresh_cfg = CONFIG["refresh"]
+    refresh_flag_file = CONFIG["paths"]["refresh_flag_file"]
+
     ret, frame = cap.read()
     if not ret:
         print("Gagal capture frame")
@@ -207,11 +213,11 @@ while True:
     frame = preprocess_frame(frame)
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (25, 25), 0)
+    gray = cv2.GaussianBlur(gray, (blur_k, blur_k), 0)
 
     # --- Diff terhadap reference ---
     diff_ref = cv2.absdiff(reference_gray, gray)
-    thresh_ref = cv2.threshold(diff_ref, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)[1]
+    thresh_ref = cv2.threshold(diff_ref, det["diff_threshold"], 255, cv2.THRESH_BINARY)[1]
     kernel = np.ones((5, 5), np.uint8)
     thresh_ref = cv2.erode(thresh_ref, kernel, iterations=1)
     thresh_ref = cv2.dilate(thresh_ref, kernel, iterations=2)
@@ -219,7 +225,7 @@ while True:
 
     # --- Diff terhadap frame sebelumnya (motion) ---
     diff_prev = cv2.absdiff(prev_gray, gray)
-    thresh_prev = cv2.threshold(diff_prev, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)[1]
+    thresh_prev = cv2.threshold(diff_prev, det["diff_threshold"], 255, cv2.THRESH_BINARY)[1]
     motion_area = cv2.countNonZero(thresh_prev)
 
     contour_area = 0
@@ -231,7 +237,9 @@ while True:
 
     display_frame = frame.copy()
 
-    if change_area > CHANGE_AREA_THRESHOLD:
+    immediate_capture_area_threshold = frame_area * det["immediate_capture_area_ratio"]
+
+    if change_area > det["change_area_threshold"]:
         if detection_start_time is None:
             detection_start_time = time.perf_counter()
 
@@ -244,27 +252,27 @@ while True:
             aspect_ratio = w / h if h > 0 else 0
             bbox = (x, y, w, h)
 
-            if contour_area >= MIN_CONTOUR_AREA and MIN_ASPECT_RATIO < aspect_ratio < MAX_ASPECT_RATIO:
+            if contour_area >= det["min_contour_area"] and det["min_aspect_ratio"] < aspect_ratio < det["max_aspect_ratio"]:
                 shape_valid = True
 
             if shape_valid:
-                is_immediate_candidate = contour_area >= IMMEDIATE_CAPTURE_AREA_THRESHOLD
+                is_immediate_candidate = contour_area >= immediate_capture_area_threshold
 
                 if is_immediate_candidate:
                     immediate_confirm_count += 1
                 else:
                     immediate_confirm_count = 0
 
-                if immediate_confirm_count >= IMMEDIATE_CONFIRM_FRAMES:
+                if immediate_confirm_count >= det["immediate_confirm_frames"]:
                     triggered = True
                     confidence_mode = "immediate"
                 else:
-                    if motion_area < MOTION_TOLERANCE_NORMAL:
+                    if motion_area < det["motion_tolerance_normal"]:
                         normal_stable_count += 1
                     else:
                         normal_stable_count = 0
 
-                    if normal_stable_count >= STABLE_FRAMES_NEEDED_NORMAL:
+                    if normal_stable_count >= det["stable_frames_needed_normal"]:
                         triggered = True
                         confidence_mode = "normal"
             else:
@@ -298,7 +306,7 @@ while True:
                 total_duration = t_infer_end - detection_start_time
 
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                if confidence >= CONFIDENCE_THRESHOLD:
+                if confidence >= confidence_threshold:
                     save_path = os.path.join(CAPTURE_DIR, label, f"{timestamp}.jpg")
                 else:
                     save_path = os.path.join(CAPTURE_DIR, "unknown", f"{timestamp}_{label}_{confidence:.2f}.jpg")
@@ -315,8 +323,8 @@ while True:
                 print(f"    Inference model   : {infer_duration * 1000:.1f} ms")
                 print(f"    TOTAL (deteksi->hasil): {total_duration * 1000:.1f} ms")
 
-                if confidence >= CONFIDENCE_THRESHOLD and label in LABEL_TO_PRESET:
-                    print(f"    -> (Simulasi) Akan kirim preset {LABEL_TO_PRESET[label]} ke ESP\n")
+                if confidence >= confidence_threshold and label in label_to_preset:
+                    print(f"    -> (Simulasi) Akan kirim preset {label_to_preset[label]} ke ESP\n")
                 elif label == 'background':
                     print(f"    -> Terdeteksi background, langsung update referensi\n")
                     reference_gray = gray.copy()
@@ -346,10 +354,50 @@ while True:
 
     should_force_refresh = (
         not object_present and
-        time_since_activity >= FORCE_REFRESH_TIMEOUT and
-        time_since_last_refresh >= REFRESH_COOLDOWN
+        time_since_activity >= refresh_cfg["force_refresh_timeout"] and
+        time_since_last_refresh >= refresh_cfg["refresh_cooldown"]
     )
-    manual_refresh_requested = os.path.exists(REFRESH_FLAG_FILE)
+    manual_refresh_requested = os.path.exists(refresh_flag_file)
+
+    # --- Overlay debug: DIGAMBAR SEBELUM imshow, biar benar-benar kelihatan
+    # di window (kalau digambar sesudah imshow, teksnya cuma nempel di frame
+    # yang sudah dibuang, gak pernah kelihatan) ---
+    now_frame_time = time.time()
+    fps = 1.0 / max(now_frame_time - prev_frame_time, 1e-6)
+    prev_frame_time = now_frame_time
+
+    bbox_text = f"bbox=({bbox[0]},{bbox[1]},{bbox[2]}x{bbox[3]})" if bbox else "bbox=-"
+
+    # Panel kiri: status runtime (angka yang lagi terjadi tiap frame)
+    status_lines = [
+        f"FPS={fps:.1f}  frame={frame.shape[1]}x{frame.shape[0]}",
+        f"change_area={change_area}  motion_area={motion_area}",
+        f"contour_area={contour_area:.0f}  aspect_ratio={aspect_ratio:.2f}  {bbox_text}",
+        f"mode={confidence_mode}  normal_stable={normal_stable_count}  immediate={immediate_confirm_count}",
+        f"object_present={object_present}",
+        f"sejak aktivitas={time_since_activity:.1f}s  sejak refresh={time_since_last_refresh:.1f}s",
+    ]
+
+    # Panel kanan: nilai config yang lagi aktif (dari config.yaml)
+    config_lines = [
+        "-- config aktif --",
+        f"diff_thr={det['diff_threshold']}  change_area_thr={det['change_area_threshold']}",
+        f"min_contour={det['min_contour_area']}  aspect=({det['min_aspect_ratio']:.2f}-{det['max_aspect_ratio']:.2f})",
+        f"stable_frames={det['stable_frames_needed_normal']}  motion_tol={det['motion_tolerance_normal']}",
+        f"immediate_ratio={det['immediate_capture_area_ratio']:.2f}  immediate_frames={det['immediate_confirm_frames']}",
+        f"immediate_area_thr={immediate_capture_area_threshold:.0f}px",
+        f"blur_kernel={blur_k}  confidence_thr={confidence_threshold:.2f}",
+        f"crop={CONFIG['preprocessing']['crop_width']}x{CONFIG['preprocessing']['crop_height']}",
+    ]
+
+    for i, line in enumerate(status_lines):
+        cv2.putText(display_frame, line, (10, 25 + i * 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 1)
+
+    panel_x = max(display_frame.shape[1] - 380, 10)
+    for i, line in enumerate(config_lines):
+        cv2.putText(display_frame, line, (panel_x, 25 + i * 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1)
 
     cv2.imshow("Live Feed", display_frame)
     cv2.imshow("Diff Mask", thresh_ref)
@@ -357,11 +405,11 @@ while True:
 
     if should_force_refresh or manual_refresh_requested or key == ord('r'):
         if manual_refresh_requested:
-            os.remove(REFRESH_FLAG_FILE)
+            os.remove(refresh_flag_file)
 
         check_label, check_confidence, check_scores = classify(frame)
 
-        if check_label == 'background' and check_confidence >= CONFIDENCE_THRESHOLD:
+        if check_label == 'background' and check_confidence >= confidence_threshold:
             reference_gray = gray.copy()
             last_refresh_time = time.time()
             last_activity_time = time.time()
@@ -386,16 +434,42 @@ while True:
 
     prev_gray = gray.copy()
 
-    # --- Overlay status untuk debugging ---
+    now_frame_time = time.time()
+    fps = 1.0 / max(now_frame_time - prev_frame_time, 1e-6)
+    prev_frame_time = now_frame_time
+
+    bbox_text = f"bbox=({bbox[0]},{bbox[1]},{bbox[2]}x{bbox[3]})" if bbox else "bbox=-"
+
+    # --- Panel kiri: status runtime (angka yang lagi terjadi tiap frame) ---
     status_lines = [
+        f"FPS={fps:.1f}  frame={frame.shape[1]}x{frame.shape[0]}",
         f"change_area={change_area}  motion_area={motion_area}",
-        f"contour_area={contour_area:.0f}  aspect_ratio={aspect_ratio:.2f}",
+        f"contour_area={contour_area:.0f}  aspect_ratio={aspect_ratio:.2f}  {bbox_text}",
         f"mode={confidence_mode}  normal_stable={normal_stable_count}  immediate={immediate_confirm_count}",
         f"object_present={object_present}",
+        f"sejak aktivitas={time_since_activity:.1f}s  sejak refresh={time_since_last_refresh:.1f}s",
     ]
+
+    # --- Panel kanan: nilai config yang lagi aktif (dari config.yaml) ---
+    config_lines = [
+        "-- config aktif --",
+        f"diff_thr={det['diff_threshold']}  change_area_thr={det['change_area_threshold']}",
+        f"min_contour={det['min_contour_area']}  aspect=({det['min_aspect_ratio']:.2f}-{det['max_aspect_ratio']:.2f})",
+        f"stable_frames={det['stable_frames_needed_normal']}  motion_tol={det['motion_tolerance_normal']}",
+        f"immediate_ratio={det['immediate_capture_area_ratio']:.2f}  immediate_frames={det['immediate_confirm_frames']}",
+        f"immediate_area_thr={immediate_capture_area_threshold:.0f}px",
+        f"blur_kernel={blur_k}  confidence_thr={confidence_threshold:.2f}",
+        f"crop={CONFIG['preprocessing']['crop_width']}x{CONFIG['preprocessing']['crop_height']}",
+    ]
+
     for i, line in enumerate(status_lines):
         cv2.putText(display_frame, line, (10, 25 + i * 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 1)
+
+    panel_x = display_frame.shape[1] - 380
+    for i, line in enumerate(config_lines):
+        cv2.putText(display_frame, line, (panel_x, 25 + i * 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1)
 
     if key == ord('q'):
         break
