@@ -310,22 +310,31 @@ os.makedirs(DEBUG_DIR, exist_ok=True)
 
 REFRESH_FLAG_FILE = "refresh_now.flag"
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(0, cv2.CAP_V4L2) 
+
+def set_and_verify(prop, value, name):
+    cap.set(prop, value)
+    print(f"{name}: minta {value}, aktual -> {cap.get(prop)}")
 
 # --- Kunci Auto Exposure & Auto White Balance ---
-# Mencegah kamera "meloncat" mengubah exposure/warna sendiri.
-# Sisa variasi cahaya ditangani software lewat gray_world_correction() di atas.
-cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)   # 1 = manual mode (0.25 di beberapa driver Windows/DirectShow)
-cap.set(cv2.CAP_PROP_EXPOSURE, -4)       # sesuaikan nilai sesuai kondisi lighting-mu
+set_and_verify(cv2.CAP_PROP_AUTO_EXPOSURE, 1, "auto_exposure")
+# exposure_time_absolute range asli: 1-5000. Default pabrik 157 (jauh dari 5000).
+# MULAI dari sini, lalu tuning naik/turun sambil lihat live feed.
+set_and_verify(cv2.CAP_PROP_EXPOSURE, 157, "exposure_time_absolute")
 
-cap.set(cv2.CAP_PROP_AUTO_WB, 1)         # matikan auto white balance
-cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 500)  # kunci di suhu warna tertentu (Kelvin)
 
-# Opsional: kunci saturasi/brightness/contrast juga
-cap.set(cv2.CAP_PROP_BRIGHTNESS, 128)
-cap.set(cv2.CAP_PROP_CONTRAST, 128)
-cap.set(cv2.CAP_PROP_SATURATION, 128)
-cap.set(cv2.CAP_PROP_GAIN, 0)
+# --- White balance manual ---
+# white_balance_automatic: 0 = OFF (harus 0, BUKAN 1)
+set_and_verify(cv2.CAP_PROP_AUTO_WB, 0, "white_balance_automatic")
+# white_balance_temperature baru bisa di-set setelah auto WB off. Range: 2800-6500
+set_and_verify(cv2.CAP_PROP_WB_TEMPERATURE, 4600, "white_balance_temperature")
+
+# --- Brightness/contrast/saturation/gain, pakai range ASLI webcam ini ---
+set_and_verify(cv2.CAP_PROP_BRIGHTNESS, 0, "brightness")     # range -64..64, default 0
+set_and_verify(cv2.CAP_PROP_CONTRAST, 34, "contrast")        # range 0..64, default 34
+set_and_verify(cv2.CAP_PROP_SATURATION, 64, "saturation")    # range 0..128, default 64
+set_and_verify(cv2.CAP_PROP_GAIN, 0, "gain")                 # range 0..100, default 0
+
 
 print("Ambil frame referensi dalam 3 detik, pastikan area kosong...")
 time.sleep(3)
