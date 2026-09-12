@@ -9,11 +9,6 @@ import tensorflow as tf
 # =============================================================
 # KONFIGURASI (dibaca dari config.yaml yang SAMA dengan program raspi)
 # =============================================================
-# CATATAN: bagian KAMERA sengaja TIDAK diambil dari config.yaml -- script
-# ini jalan di Windows/laptop (exposure -4 = skala DirectShow), sedangkan
-# config.yaml['camera'] ditujukan buat webcam UGREEN di raspi lewat V4L2
-# (backend Linux, tidak ada di Windows). Kalau dipaksa sama, program ini
-# bakal rusak/gagal buka kamera.
 
 CONFIG_PATH = "config.yaml"
 CONFIG = {}
