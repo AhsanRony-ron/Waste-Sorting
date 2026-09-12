@@ -311,11 +311,21 @@ os.makedirs(DEBUG_DIR, exist_ok=True)
 
 REFRESH_FLAG_FILE = "refresh_now.flag"
 
-cap = cv2.VideoCapture(0, cv2.CAP_V4L2) 
+cap = cv2.VideoCapture(0, cv2.CAP_V4L2)  # paksa backend V4L2 biar mapping property konsisten
 
 def set_and_verify(prop, value, name):
     cap.set(prop, value)
     print(f"{name}: minta {value}, aktual -> {cap.get(prop)}")
+
+# --- Format & resolusi capture ---
+# Banyak USB webcam cuma dukung resolusi tinggi (mis. 1920x1080) dalam format
+# MJPG (terkompresi), bukan YUYV (mentah) -- YUYV di resolusi tinggi kebanyakan
+# bandwidth USB dan diam-diam di-fallback ke resolusi rendah oleh driver.
+# FOURCC harus di-set SEBELUM resolusi. Cek kombinasi yang didukung webcam-mu:
+#   v4l2-ctl -d /dev/video0 --list-formats-ext
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+set_and_verify(cv2.CAP_PROP_FRAME_WIDTH, 1920, "frame_width")
+set_and_verify(cv2.CAP_PROP_FRAME_HEIGHT, 1080, "frame_height")
 
 # --- Kunci Auto Exposure & Auto White Balance ---
 set_and_verify(cv2.CAP_PROP_AUTO_EXPOSURE, 1, "auto_exposure")
@@ -340,7 +350,9 @@ set_and_verify(cv2.CAP_PROP_GAIN, 0, "gain")                 # range 0..100, def
 print("Ambil frame referensi dalam 3 detik, pastikan area kosong...")
 time.sleep(3)
 ret, reference = cap.read()
+print("Resolusi asli dari kamera:", reference.shape)  # (height, width, channels)
 reference = preprocess_frame(reference)
+print("Resolusi setelah crop:", reference.shape)
 reference_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
 reference_gray = cv2.GaussianBlur(reference_gray, (25, 25), 0)
 
@@ -371,10 +383,10 @@ while True:
         print("Gagal capture frame")
         continue
 
-    send_ping()
-    poll_commands(raw_frame)  # camera_check pakai frame mentah, sebelum crop/koreksi
-
     frame = preprocess_frame(raw_frame)
+
+    send_ping()
+    poll_commands(frame)  # camera_check pakai frame yang sudah di-crop & dikoreksi warnanya
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (25, 25), 0)
