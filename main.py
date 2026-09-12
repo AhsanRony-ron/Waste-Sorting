@@ -35,7 +35,7 @@ CROP_OFFSET_Y = 0    # geser titik tengah crop secara vertikal (px), + ke bawah
 # --- Koreksi warna otomatis (gray world) ---
 # Menstabilkan warna/saturasi saat cahaya ambient berubah, tanpa
 # mengandalkan auto white balance kamera yang sering "meloncat".
-ENABLE_COLOR_CORRECTION = False
+ENABLE_COLOR_CORRECTION = True
 COLOR_GAIN_MIN = 0.6   # batas bawah gain per channel, cegah overcorrect
 COLOR_GAIN_MAX = 1.6   # batas atas gain per channel, cegah overcorrect
 
@@ -285,7 +285,7 @@ def poll_commands(frame):
 
 
 # ===== Parameter dasar frame diff =====
-DIFF_THRESHOLD = 20
+DIFF_THRESHOLD = 10
 CHANGE_AREA_THRESHOLD = 8000
 MIN_CONTOUR_AREA = 10000
 MIN_ASPECT_RATIO = 0.2
@@ -354,7 +354,7 @@ print("Resolusi asli dari kamera:", reference.shape)  # (height, width, channels
 reference = preprocess_frame(reference)
 print("Resolusi setelah crop:", reference.shape)
 reference_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
-reference_gray = cv2.GaussianBlur(reference_gray, (25, 25), 0)
+reference_gray = cv2.GaussianBlur(reference_gray, (15, 15), 0)
 
 frame_area = reference_gray.shape[0] * reference_gray.shape[1]
 IMMEDIATE_CAPTURE_AREA_THRESHOLD = frame_area * IMMEDIATE_CAPTURE_AREA_RATIO
@@ -389,7 +389,7 @@ while True:
     poll_commands(frame)  # camera_check pakai frame yang sudah di-crop & dikoreksi warnanya
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (25, 25), 0)
+    gray = cv2.GaussianBlur(gray, (15, 15), 0)
 
     if paused:
         prev_gray = gray.copy()  # tetap update biar gak ada lonjakan diff pas resume
