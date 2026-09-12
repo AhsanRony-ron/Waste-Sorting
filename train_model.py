@@ -1,7 +1,10 @@
+import os
 import tensorflow as tf
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.model_selection import train_test_split
 from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
 from tensorflow.keras.models import Model
@@ -11,12 +14,50 @@ from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import confusion_matrix, classification_report
 
 DATASET_DIR = "dataset"
+SOURCE_MAPPING_CSV = "dataset_source_mapping.csv"  # dihasilkan oleh analisis_dataset.py
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
 EPOCHS_HEAD = 15       # tahap 1: cuma latih classifier head
 EPOCHS_FINETUNE = 10   # tahap 2: fine-tune sebagian layer MobileNetV2
+VAL_SPLIT = 0.2
 
-# 1. Data generator dengan augmentasi + split train/val otomatis
+
+# ===== Split train/validation manual: validation HANYA dari data real =====
+# TrashNet tidak pernah masuk validation, supaya angka val_accuracy benar-benar
+# merepresentasikan performa di kamera/kondisi asli, bukan ketumpuk sama
+# background putih TrashNet yang gampang ditebak.
+def build_train_val_split():
+    if not os.path.exists(SOURCE_MAPPING_CSV):
+        raise FileNotFoundError(
+            f"'{SOURCE_MAPPING_CSV}' tidak ditemukan. Jalankan analisis_dataset.py dulu "
+            f"untuk menghasilkan file mapping filepath -> class -> source."
+        )
+
+    df = pd.read_csv(SOURCE_MAPPING_CSV)
+
+    real_df = df[df["source"] == "real"]
+    trashnet_df = df[df["source"] == "trashnet"]
+
+    # split HANYA dari data real, stratified per kelas
+    train_real_df, val_df = train_test_split(
+        real_df,
+        test_size=VAL_SPLIT,
+        stratify=real_df["class"],
+        random_state=42
+    )
+
+    # trashnet SELALU masuk train, tidak pernah masuk validation
+    train_df = pd.concat([train_real_df, trashnet_df], ignore_index=True)
+
+    print(f"Train      : {len(train_df)} gambar ({len(train_real_df)} real + {len(trashnet_df)} trashnet)")
+    print(f"Validation : {len(val_df)} gambar (100% real, tidak ada trashnet)")
+
+    return train_df, val_df
+
+
+train_df, val_df = build_train_val_split()
+
+# 1. Data generator dengan augmentasi (train) dan tanpa augmentasi (validation)
 datagen = ImageDataGenerator(
     rescale=1./255,
     rotation_range=25,
@@ -26,30 +67,28 @@ datagen = ImageDataGenerator(
     shear_range=0.1,
     horizontal_flip=True,
     brightness_range=[0.6, 1.4],
-    validation_split=0.2
 )
 
 # Validation TIDAK pakai augmentasi (cuma rescale), biar evaluasi lebih representatif
-val_datagen = ImageDataGenerator(
-    rescale=1./255,
-    validation_split=0.2
-)
+val_datagen = ImageDataGenerator(rescale=1./255)
 
-train_gen = datagen.flow_from_directory(
-    DATASET_DIR,
+train_gen = datagen.flow_from_dataframe(
+    train_df,
+    x_col="filepath",
+    y_col="class",
     target_size=IMG_SIZE,
     batch_size=BATCH_SIZE,
-    class_mode='categorical',
-    subset='training',
+    class_mode="categorical",
     shuffle=True
 )
 
-val_gen = val_datagen.flow_from_directory(
-    DATASET_DIR,
+val_gen = val_datagen.flow_from_dataframe(
+    val_df,
+    x_col="filepath",
+    y_col="class",
     target_size=IMG_SIZE,
     batch_size=BATCH_SIZE,
-    class_mode='categorical',
-    subset='validation',
+    class_mode="categorical",
     shuffle=False   # PENTING: jangan diubah ke True, supaya urutan y_true & y_pred nanti tetap sinkron
 )
 

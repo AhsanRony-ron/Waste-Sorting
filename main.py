@@ -35,7 +35,7 @@ CROP_OFFSET_Y = 0    # geser titik tengah crop secara vertikal (px), + ke bawah
 # --- Koreksi warna otomatis (gray world) ---
 # Menstabilkan warna/saturasi saat cahaya ambient berubah, tanpa
 # mengandalkan auto white balance kamera yang sering "meloncat".
-ENABLE_COLOR_CORRECTION = True
+ENABLE_COLOR_CORRECTION = False
 COLOR_GAIN_MIN = 0.6   # batas bawah gain per channel, cegah overcorrect
 COLOR_GAIN_MAX = 1.6   # batas atas gain per channel, cegah overcorrect
 
