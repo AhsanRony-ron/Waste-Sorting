@@ -1,0 +1,93 @@
+# =============================================================
+# Config untuk smart_trash_raspi.py
+# File ini di-reload otomatis oleh program (dicek tiap loop lewat
+# mtime file) -- ubah nilai di sini, simpan, TIDAK PERLU restart
+# program untuk sebagian besar parameter (lihat catatan tiap grup).
+# =============================================================
+
+# --- Kamera fisik (V4L2) ---
+# PERLU re-apply ke device (cap.set()) saat berubah -- program otomatis
+# menerapkan ulang begitu file ini ke-reload, tidak perlu restart.
+# Cek range asli yang didukung webcam kamu: v4l2-ctl -d /dev/video0 --list-ctrls
+camera:
+  frame_width: 1920
+  frame_height: 1080
+  auto_exposure: 1          # 1 = Manual Mode (punya webcam UGREEN kamu)
+  exposure_time_absolute: 1000   # range 1-5000, default pabrik 157
+  auto_wb: 1                # 0 = OFF (manual).
+  wb_temperature: 4600      # range 2800-6500, aktif hanya kalau auto_wb: 0
+  brightness: 20             # range -64..64
+  contrast: 34              # range 0..64
+  saturation: 64            # range 0..128
+  gain: 0                   # range 0..100
+
+# --- Crop & koreksi warna software ---
+# Dibaca ulang tiap frame, langsung berubah tanpa restart.
+preprocessing:
+  crop_width: 900
+  crop_height: 600
+  crop_offset_x: 0
+  crop_offset_y: 0
+  enable_color_correction: true
+  color_gain_min: 0.6
+  color_gain_max: 1.6
+  gaussian_blur_kernel: 15   # HARUS angka ganjil (9, 11, 13, 15, ...)
+
+# --- Deteksi perubahan / frame diff ---
+# Dibaca ulang tiap frame, langsung berubah tanpa restart.
+detection:
+  diff_threshold: 20
+  change_area_threshold: 8000
+  min_contour_area: 10000
+  min_aspect_ratio: 0.2
+  max_aspect_ratio: 5.0
+  stable_frames_needed_normal: 5
+  motion_tolerance_normal: 50000
+  immediate_capture_area_ratio: 0.30
+  immediate_confirm_frames: 10
+
+# --- Refresh reference frame (otomatis / manual) ---
+refresh:
+  force_refresh_timeout: 20.0
+  refresh_cooldown: 30.0
+
+# --- Komunikasi ke ESP ---
+# serial_port & baud_rate cuma dipakai sekali saat program start
+# (buka koneksi serial) -- ubah nilai ini BUTUH restart program.
+# Sisanya (delay, ping interval) dibaca live, tidak perlu restart.
+esp:
+  serial_port: /dev/ttyUSB0
+  baud_rate: 115200
+  post_preset_delay: 2.0
+  post_neutral_delay: 1.5
+  ping_interval: 1.0
+
+# --- Reclassify berkala saat objek masih di piringan ---
+reclassify:
+  interval: 2.0
+  stuck_resend_cooldown: 5.0
+
+# --- Model klasifikasi ---
+# path & class_names dipakai sekali saat load model -- ubah BUTUH restart.
+# confidence_threshold & label_to_preset dibaca live, tidak perlu restart.
+model:
+  path: waste_classifier.tflite
+  confidence_threshold: 0.6
+  class_names: [background, daun, kaleng, kertas, plastik]
+  label_to_preset:
+    kertas: 1
+    plastik: 2
+    kaleng: 3
+    daun: 4
+
+# --- Path file & folder ---
+# Dipakai sekali saat startup (bikin folder, buka log) -- ubah BUTUH restart.
+paths:
+  log_file: hasil_pengujian.csv
+  capture_dir: captured_data
+  debug_dir: calibration_debug
+  refresh_flag_file: refresh_now.flag
+  events_dir: telegram_sync/events
+  commands_dir: telegram_sync/commands
+  commands_done_dir: telegram_sync/commands_done
+  debug_capture_dir: debug_captures
