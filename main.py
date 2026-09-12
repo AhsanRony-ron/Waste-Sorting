@@ -6,11 +6,50 @@ import serial
 import csv
 import json
 import glob
-import uuid
+import yaml
 from datetime import datetime
 from ai_edge_litert.interpreter import Interpreter
 
-LOG_FILE = "hasil_pengujian.csv"
+# =============================================================
+# KONFIGURASI (dibaca dari config.yaml, auto-reload tanpa restart)
+# =============================================================
+
+CONFIG_PATH = "config.yaml"
+CONFIG = {}
+_config_mtime = 0
+
+
+def load_config():
+    global CONFIG, _config_mtime
+    with open(CONFIG_PATH) as f:
+        CONFIG = yaml.safe_load(f)
+    _config_mtime = os.path.getmtime(CONFIG_PATH)
+
+
+def reload_config_if_changed():
+    """
+    Cek mtime config.yaml tiap dipanggil. Kalau berubah, reload isinya dan
+    terapkan ulang parameter kamera (yang butuh cap.set(), tidak otomatis
+    kebawa cuma dari baca dict). Parameter software lain otomatis kepakai
+    nilai baru karena selalu dibaca langsung dari CONFIG saat dipakai.
+    """
+    global _config_mtime
+    try:
+        mtime = os.path.getmtime(CONFIG_PATH)
+    except OSError:
+        return False
+
+    if mtime != _config_mtime:
+        load_config()
+        apply_camera_config()
+        print(">>> [CONFIG] config.yaml berubah, direload & parameter kamera diterapkan ulang.\n")
+        return True
+    return False
+
+
+load_config()
+
+LOG_FILE = CONFIG["paths"]["log_file"]
 
 if not os.path.exists(LOG_FILE):
     with open(LOG_FILE, 'w', newline='') as f:
@@ -20,24 +59,6 @@ if not os.path.exists(LOG_FILE):
             "detection_ms", "crop_ms", "inference_ms", "total_ms",
             "label_sebenarnya"  # kolom ini diisi MANUAL setelah pengujian, cocokkan dengan urutan sampah yang ditaruh
         ])
-
-# =============================================================
-# KONFIGURASI CROP & KOREKSI WARNA (dipindah dari versi VSCode)
-# =============================================================
-
-# --- Crop kamera (resolusi custom, tidak harus persegi) ---
-# Set None jika tidak ingin crop pada dimensi tersebut (pakai penuh).
-CROP_WIDTH = 900     # contoh: lebar area crop di tengah
-CROP_HEIGHT = 600    # contoh: tinggi area crop di tengah
-CROP_OFFSET_X = 0    # geser titik tengah crop secara horizontal (px), + ke kanan
-CROP_OFFSET_Y = 0    # geser titik tengah crop secara vertikal (px), + ke bawah
-
-# --- Koreksi warna otomatis (gray world) ---
-# Menstabilkan warna/saturasi saat cahaya ambient berubah, tanpa
-# mengandalkan auto white balance kamera yang sering "meloncat".
-ENABLE_COLOR_CORRECTION = True
-COLOR_GAIN_MIN = 0.6   # batas bawah gain per channel, cegah overcorrect
-COLOR_GAIN_MAX = 1.6   # batas atas gain per channel, cegah overcorrect
 
 
 def crop_center(frame, width=None, height=None, offset_x=0, offset_y=0):
@@ -89,43 +110,37 @@ def gray_world_correction(frame, gain_min=0.6, gain_max=1.6):
 
 
 def preprocess_frame(raw_frame):
-    """Crop + koreksi warna, dipakai konsisten di semua titik pengambilan frame."""
-    f = crop_center(raw_frame, CROP_WIDTH, CROP_HEIGHT, CROP_OFFSET_X, CROP_OFFSET_Y)
-    if ENABLE_COLOR_CORRECTION:
-        f = gray_world_correction(f, COLOR_GAIN_MIN, COLOR_GAIN_MAX)
+    """Crop + koreksi warna, parameter dibaca live dari CONFIG tiap kali dipanggil."""
+    pp = CONFIG["preprocessing"]
+    f = crop_center(raw_frame, pp["crop_width"], pp["crop_height"],
+                     pp["crop_offset_x"], pp["crop_offset_y"])
+    if pp["enable_color_correction"]:
+        f = gray_world_correction(f, pp["color_gain_min"], pp["color_gain_max"])
     return f
 
 
-# ===== Setup serial ke ESP =====
-SERIAL_PORT = '/dev/ttyUSB0'
+# ===== Setup serial ke ESP (port & baudrate cuma dipakai sekali saat start) =====
+SERIAL_PORT = CONFIG["esp"]["serial_port"]
+BAUD_RATE = CONFIG["esp"]["baud_rate"]
 
-_tmp = serial.Serial(SERIAL_PORT, 115200, timeout=1)
+_tmp = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
 time.sleep(0.3)
 _tmp.close()
 time.sleep(0.5)
 
-ser = serial.Serial(SERIAL_PORT, 115200, timeout=1)
+ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
 time.sleep(2)
 ser.reset_input_buffer()
 ser.reset_output_buffer()
 
-# ===== Setup model =====
-interpreter = Interpreter(model_path="waste_classifier.tflite")
+# ===== Setup model (path & class_names cuma dipakai sekali saat load) =====
+interpreter = Interpreter(model_path=CONFIG["model"]["path"])
 interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
-class_names = ['background', 'daun', 'kaleng', 'kertas', 'plastik']
+class_names = CONFIG["model"]["class_names"]
 
-label_to_preset = {
-    'kertas': 1,
-    'plastik': 2,
-    'kaleng': 3,
-    'daun': 4,
-}
-
-CONFIDENCE_THRESHOLD = 0.6
-
-CAPTURE_DIR = "captured_data"
+CAPTURE_DIR = CONFIG["paths"]["capture_dir"]
 for cname in class_names:
     os.makedirs(os.path.join(CAPTURE_DIR, cname), exist_ok=True)
 os.makedirs(os.path.join(CAPTURE_DIR, "unknown"), exist_ok=True)
@@ -146,7 +161,7 @@ def classify(cropped_bgr):
     return class_names[predicted_idx], confidence, output
 
 
-def send_to_esp(preset_idx, max_read_lines=20, read_timeout=2.0):
+def send_to_esp(preset_idx):
     cmd = f"{preset_idx}\n"
     ser.write(cmd.encode())
     time.sleep(0.3)
@@ -154,10 +169,10 @@ def send_to_esp(preset_idx, max_read_lines=20, read_timeout=2.0):
 
 # ===================== Sinkronisasi Telegram (file-based queue) =====================
 
-EVENTS_DIR = "telegram_sync/events"
-COMMANDS_DIR = "telegram_sync/commands"
-COMMANDS_DONE_DIR = "telegram_sync/commands_done"
-DEBUG_CAPTURE_DIR = "debug_captures"
+EVENTS_DIR = CONFIG["paths"]["events_dir"]
+COMMANDS_DIR = CONFIG["paths"]["commands_dir"]
+COMMANDS_DONE_DIR = CONFIG["paths"]["commands_done_dir"]
+DEBUG_CAPTURE_DIR = CONFIG["paths"]["debug_capture_dir"]
 
 os.makedirs(EVENTS_DIR, exist_ok=True)
 os.makedirs(COMMANDS_DIR, exist_ok=True)
@@ -175,14 +190,13 @@ def write_event(event_type, data):
 
 
 paused = False
-
-PING_INTERVAL = 1.0
 last_ping_sent = 0
 
 
 def send_ping():
     global last_ping_sent
-    if time.time() - last_ping_sent >= PING_INTERVAL:
+    ping_interval = CONFIG["esp"]["ping_interval"]
+    if time.time() - last_ping_sent >= ping_interval:
         ser.write(b"PING\n")
         last_ping_sent = time.time()
 
@@ -234,7 +248,7 @@ def handle_manual_preset(cmd):
 
 
 def handle_refresh_reference(cmd):
-    open(REFRESH_FLAG_FILE, 'w').close()
+    open(CONFIG["paths"]["refresh_flag_file"], 'w').close()
     write_event("command_result", {
         "command_id": cmd["id"], "command": "refresh_reference", "chat_id": cmd["chat_id"],
         "success": True, "message": "Refresh referensi dijadwalkan"
@@ -284,68 +298,41 @@ def poll_commands(frame):
         os.rename(path, os.path.join(COMMANDS_DONE_DIR, os.path.basename(path)))
 
 
-# ===== Parameter dasar frame diff =====
-DIFF_THRESHOLD = 10
-CHANGE_AREA_THRESHOLD = 8000
-MIN_CONTOUR_AREA = 10000
-MIN_ASPECT_RATIO = 0.2
-MAX_ASPECT_RATIO = 5.0
-
-STABLE_FRAMES_NEEDED_NORMAL = 10
-MOTION_TOLERANCE_NORMAL = 100  # dinaikkan, biar goyangan wajar plastik tidak reset terus
-
-IMMEDIATE_CAPTURE_AREA_RATIO = 0.10  # diturunkan, biar kontur sedang pun bisa immediate
-IMMEDIATE_CONFIRM_FRAMES = 10
-
-FORCE_REFRESH_TIMEOUT = 20.0
-REFRESH_COOLDOWN = 30.0
-
-POST_PRESET_DELAY = 2.0
-POST_NEUTRAL_DELAY = 1.5
-
-RECLASSIFY_INTERVAL = 2.0       # seberapa sering cek ulang objek yang lagi di piringan
-STUCK_RESEND_COOLDOWN = 5.0     # jarak minimal antar kirim ulang preset YANG SAMA (biar ga spam ESP)
-
-DEBUG_DIR = "calibration_debug"
+DEBUG_DIR = CONFIG["paths"]["debug_dir"]
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
-REFRESH_FLAG_FILE = "refresh_now.flag"
-
-cap = cv2.VideoCapture(0, cv2.CAP_V4L2)  # paksa backend V4L2 biar mapping property konsisten
 
 def set_and_verify(prop, value, name):
     cap.set(prop, value)
     print(f"{name}: minta {value}, aktual -> {cap.get(prop)}")
 
-# --- Format & resolusi capture ---
-# Banyak USB webcam cuma dukung resolusi tinggi (mis. 1920x1080) dalam format
-# MJPG (terkompresi), bukan YUYV (mentah) -- YUYV di resolusi tinggi kebanyakan
-# bandwidth USB dan diam-diam di-fallback ke resolusi rendah oleh driver.
-# FOURCC harus di-set SEBELUM resolusi. Cek kombinasi yang didukung webcam-mu:
-#   v4l2-ctl -d /dev/video0 --list-formats-ext
-cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-set_and_verify(cv2.CAP_PROP_FRAME_WIDTH, 1920, "frame_width")
-set_and_verify(cv2.CAP_PROP_FRAME_HEIGHT, 1080, "frame_height")
 
-# --- Kunci Auto Exposure & Auto White Balance ---
-set_and_verify(cv2.CAP_PROP_AUTO_EXPOSURE, 1, "auto_exposure")
-# exposure_time_absolute range asli: 1-5000. Default pabrik 157 (jauh dari 5000).
-# MULAI dari sini, lalu tuning naik/turun sambil lihat live feed.
-set_and_verify(cv2.CAP_PROP_EXPOSURE, 500, "exposure_time_absolute")
+def apply_camera_config():
+    """
+    Terapkan semua parameter kamera fisik dari CONFIG['camera'] ke device.
+    Dipanggil saat startup DAN tiap kali config.yaml ke-reload, karena
+    kamera fisik nyimpen state-nya sendiri lewat cap.set() -- gak otomatis
+    kebawa cuma dari baca dict CONFIG.
+    """
+    cam = CONFIG["camera"]
+    # FOURCC harus MJPG (bukan parameter yang perlu diubah-ubah) -- banyak
+    # webcam cuma dukung resolusi tinggi dalam format ini, YUYV kebanyakan
+    # bandwidth USB dan diam-diam di-fallback ke resolusi rendah.
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+    set_and_verify(cv2.CAP_PROP_FRAME_WIDTH, cam["frame_width"], "frame_width")
+    set_and_verify(cv2.CAP_PROP_FRAME_HEIGHT, cam["frame_height"], "frame_height")
+    set_and_verify(cv2.CAP_PROP_AUTO_EXPOSURE, cam["auto_exposure"], "auto_exposure")
+    set_and_verify(cv2.CAP_PROP_EXPOSURE, cam["exposure_time_absolute"], "exposure_time_absolute")
+    set_and_verify(cv2.CAP_PROP_AUTO_WB, cam["auto_wb"], "white_balance_automatic")
+    set_and_verify(cv2.CAP_PROP_WB_TEMPERATURE, cam["wb_temperature"], "white_balance_temperature")
+    set_and_verify(cv2.CAP_PROP_BRIGHTNESS, cam["brightness"], "brightness")
+    set_and_verify(cv2.CAP_PROP_CONTRAST, cam["contrast"], "contrast")
+    set_and_verify(cv2.CAP_PROP_SATURATION, cam["saturation"], "saturation")
+    set_and_verify(cv2.CAP_PROP_GAIN, cam["gain"], "gain")
 
 
-# --- White balance manual ---
-# white_balance_automatic: 0 = OFF (harus 0, BUKAN 1)
-set_and_verify(cv2.CAP_PROP_AUTO_WB, 1, "white_balance_automatic")
-# white_balance_temperature baru bisa di-set setelah auto WB off. Range: 2800-6500
-set_and_verify(cv2.CAP_PROP_WB_TEMPERATURE, 4600, "white_balance_temperature")
-
-# --- Brightness/contrast/saturation/gain, pakai range ASLI webcam ini ---
-set_and_verify(cv2.CAP_PROP_BRIGHTNESS, 0, "brightness")     # range -64..64, default 0
-set_and_verify(cv2.CAP_PROP_CONTRAST, 34, "contrast")        # range 0..64, default 34
-set_and_verify(cv2.CAP_PROP_SATURATION, 64, "saturation")    # range 0..128, default 64
-set_and_verify(cv2.CAP_PROP_GAIN, 0, "gain")                 # range 0..100, default 0
-
+cap = cv2.VideoCapture(0, cv2.CAP_V4L2)  # paksa backend V4L2 biar mapping property konsisten
+apply_camera_config()
 
 print("Ambil frame referensi dalam 3 detik, pastikan area kosong...")
 time.sleep(3)
@@ -353,11 +340,12 @@ ret, reference = cap.read()
 print("Resolusi asli dari kamera:", reference.shape)  # (height, width, channels)
 reference = preprocess_frame(reference)
 print("Resolusi setelah crop:", reference.shape)
+
+blur_k = CONFIG["preprocessing"]["gaussian_blur_kernel"]
 reference_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
-reference_gray = cv2.GaussianBlur(reference_gray, (15, 15), 0)
+reference_gray = cv2.GaussianBlur(reference_gray, (blur_k, blur_k), 0)
 
 frame_area = reference_gray.shape[0] * reference_gray.shape[1]
-IMMEDIATE_CAPTURE_AREA_THRESHOLD = frame_area * IMMEDIATE_CAPTURE_AREA_RATIO
 
 prev_gray = reference_gray.copy()
 normal_stable_count = 0
@@ -375,9 +363,12 @@ current_bbox = None
 next_reclassify_time = None
 
 print("Sistem siap. Monitoring piringan...")
-print(f"(Buat force-refresh manual dari SSH: touch {REFRESH_FLAG_FILE})\n")
+print(f"(Buat force-refresh manual dari SSH: touch {CONFIG['paths']['refresh_flag_file']})")
+print(f"(Ubah config.yaml kapan saja -- otomatis di-reload, tidak perlu restart)\n")
 
 while True:
+    reload_config_if_changed()
+
     ret, raw_frame = cap.read()
     if not ret:
         print("Gagal capture frame")
@@ -388,22 +379,25 @@ while True:
     send_ping()
     poll_commands(frame)  # camera_check pakai frame yang sudah di-crop & dikoreksi warnanya
 
+    det = CONFIG["detection"]
+    blur_k = CONFIG["preprocessing"]["gaussian_blur_kernel"]
+
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (15, 15), 0)
+    gray = cv2.GaussianBlur(gray, (blur_k, blur_k), 0)
 
     if paused:
         prev_gray = gray.copy()  # tetap update biar gak ada lonjakan diff pas resume
         continue
 
     diff_ref = cv2.absdiff(reference_gray, gray)
-    thresh_ref = cv2.threshold(diff_ref, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)[1]
+    thresh_ref = cv2.threshold(diff_ref, det["diff_threshold"], 255, cv2.THRESH_BINARY)[1]
     kernel = np.ones((5, 5), np.uint8)
     thresh_ref = cv2.erode(thresh_ref, kernel, iterations=1)
     thresh_ref = cv2.dilate(thresh_ref, kernel, iterations=2)
     change_area = cv2.countNonZero(thresh_ref)
 
     diff_prev = cv2.absdiff(prev_gray, gray)
-    thresh_prev = cv2.threshold(diff_prev, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)[1]
+    thresh_prev = cv2.threshold(diff_prev, det["diff_threshold"], 255, cv2.THRESH_BINARY)[1]
     motion_area = cv2.countNonZero(thresh_prev)
 
     contour_area = 0
@@ -413,7 +407,9 @@ while True:
     confidence_mode = "normal"
     triggered = False
 
-    if change_area > CHANGE_AREA_THRESHOLD:
+    immediate_capture_area_threshold = frame_area * det["immediate_capture_area_ratio"]
+
+    if change_area > det["change_area_threshold"]:
         if detection_start_time is None:
             detection_start_time = time.perf_counter()
 
@@ -426,27 +422,27 @@ while True:
             bbox = (x, y, w, h)
             current_bbox = bbox
 
-            if contour_area >= MIN_CONTOUR_AREA and MIN_ASPECT_RATIO < aspect_ratio < MAX_ASPECT_RATIO:
+            if contour_area >= det["min_contour_area"] and det["min_aspect_ratio"] < aspect_ratio < det["max_aspect_ratio"]:
                 shape_valid = True
 
             if shape_valid:
-                is_immediate_candidate = contour_area >= IMMEDIATE_CAPTURE_AREA_THRESHOLD
+                is_immediate_candidate = contour_area >= immediate_capture_area_threshold
 
                 if is_immediate_candidate:
                     immediate_confirm_count += 1
                 else:
                     immediate_confirm_count = 0
 
-                if immediate_confirm_count >= IMMEDIATE_CONFIRM_FRAMES:
+                if immediate_confirm_count >= det["immediate_confirm_frames"]:
                     triggered = True
                     confidence_mode = "immediate"
                 else:
-                    if motion_area < MOTION_TOLERANCE_NORMAL:
+                    if motion_area < det["motion_tolerance_normal"]:
                         normal_stable_count += 1
                     else:
                         normal_stable_count = 0
 
-                    if normal_stable_count >= STABLE_FRAMES_NEEDED_NORMAL:
+                    if normal_stable_count >= det["stable_frames_needed_normal"]:
                         triggered = True
                         confidence_mode = "normal"
             else:
@@ -476,8 +472,11 @@ while True:
 
                 total_duration = t_infer_end - detection_start_time
 
+                confidence_threshold = CONFIG["model"]["confidence_threshold"]
+                label_to_preset = CONFIG["model"]["label_to_preset"]
+
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                if confidence >= CONFIDENCE_THRESHOLD:
+                if confidence >= confidence_threshold:
                     save_path = os.path.join(CAPTURE_DIR, label, f"{timestamp}.jpg")
                 else:
                     save_path = os.path.join(CAPTURE_DIR, "unknown", f"{timestamp}_{label}_{confidence:.2f}.jpg")
@@ -491,7 +490,7 @@ while True:
                     "detection_ms": round(detection_duration * 1000, 2),
                     "inference_ms": round(infer_duration * 1000, 2),
                     "total_ms": round(total_duration * 1000, 2),
-                    "all_scores": {cname: float(all_scores[i]) for i, cname in enumerate(class_names)},  # tambahan
+                    "all_scores": {cname: float(all_scores[i]) for i, cname in enumerate(class_names)},
                 })
 
                 print(f"\n>>> STABIL & VALID [{confidence_mode}] -> disimpan {save_path}")
@@ -510,21 +509,19 @@ while True:
                         timestamp, label, f"{confidence:.4f}",
                         f"{detection_duration*1000:.2f}", f"{crop_duration*1000:.2f}",
                         f"{infer_duration*1000:.2f}", f"{total_duration*1000:.2f}",
-                        ""  # kosongkan dulu, isi manual belakangan pas review hasil
+                        ""
                     ])
 
-                if confidence >= CONFIDENCE_THRESHOLD and label in label_to_preset:
+                if confidence >= confidence_threshold and label in label_to_preset:
                     preset = label_to_preset[label]
                     print(f"    -> Kirim preset {preset} ke ESP\n")
                     send_to_esp(preset)
                     last_preset_sent = preset
-                    time.sleep(POST_PRESET_DELAY)
+                    time.sleep(CONFIG["esp"]["post_preset_delay"])
                     send_to_esp(0)
-                    time.sleep(POST_NEUTRAL_DELAY)
+                    time.sleep(CONFIG["esp"]["post_neutral_delay"])
 
                 elif label == 'background':
-                    # background terkonfirmasi saat siklus normal, ESP diam,
-                    # langsung pakai frame ini sebagai referensi baru tanpa tunggu timeout
                     print(f"    -> Terdeteksi background, tidak ada aksi ke ESP")
                     print(f"    -> Langsung update referensi dari frame ini (background terkonfirmasi)\n")
                     reference_gray = gray.copy()
@@ -536,7 +533,7 @@ while True:
 
                 object_present = True
                 last_activity_time = time.time()
-                next_reclassify_time = time.time() + RECLASSIFY_INTERVAL
+                next_reclassify_time = time.time() + CONFIG["reclassify"]["interval"]
         else:
             normal_stable_count = 0
             immediate_confirm_count = 0
@@ -555,32 +552,36 @@ while True:
         next_reclassify_time = None
 
     # ===== Refresh: otomatis (timeout) atau manual (file trigger, termasuk dari Telegram) =====
+    refresh_cfg = CONFIG["refresh"]
+    refresh_flag_file = CONFIG["paths"]["refresh_flag_file"]
+
     time_since_activity = time.time() - last_activity_time
     time_since_last_refresh = time.time() - last_refresh_time
 
     should_force_refresh = (
         not object_present and
-        time_since_activity >= FORCE_REFRESH_TIMEOUT and
-        time_since_last_refresh >= REFRESH_COOLDOWN
+        time_since_activity >= refresh_cfg["force_refresh_timeout"] and
+        time_since_last_refresh >= refresh_cfg["refresh_cooldown"]
     )
 
-    manual_refresh_requested = os.path.exists(REFRESH_FLAG_FILE)
+    manual_refresh_requested = os.path.exists(refresh_flag_file)
 
     if should_force_refresh or manual_refresh_requested:
         if manual_refresh_requested:
-            os.remove(REFRESH_FLAG_FILE)
+            os.remove(refresh_flag_file)
 
-        # sebelum commit sebagai referensi, verifikasi dulu ini benar background
+        confidence_threshold = CONFIG["model"]["confidence_threshold"]
+        label_to_preset = CONFIG["model"]["label_to_preset"]
+
         check_label, check_confidence, check_scores = classify(frame)
 
-        if check_label == 'background' and check_confidence >= CONFIDENCE_THRESHOLD:
+        if check_label == 'background' and check_confidence >= confidence_threshold:
             reference_gray = gray.copy()
             last_refresh_time = time.time()
             last_activity_time = time.time()
             reason = "manual (file trigger)" if manual_refresh_requested else f"otomatis (tidak ada aktivitas {time_since_activity:.1f}s)"
             print(f">>> [REFRESH] Terverifikasi background ({check_confidence*100:.1f}%) — referensi diperbarui, {reason}\n")
         else:
-            # Ada sesuatu yang nyangkut di piringan, bukan background beneran
             print(f">>> [REFRESH DITUNDA] Frame terdeteksi sebagai '{check_label}' ({check_confidence*100:.1f}%), bukan background.")
             print(f"    Kemungkinan ada barang nyangkut di piringan.\n")
 
@@ -588,29 +589,32 @@ while True:
             stuck_path = os.path.join(CAPTURE_DIR, "unknown", f"stuck_{timestamp}_{check_label}_{check_confidence:.2f}.jpg")
             cv2.imwrite(stuck_path, frame)
 
-            if check_confidence >= CONFIDENCE_THRESHOLD and check_label in label_to_preset:
+            if check_confidence >= confidence_threshold and check_label in label_to_preset:
                 preset = label_to_preset[check_label]
                 print(f"    -> Kirim preset {preset} ke ESP buat bersihkan barang nyangkut\n")
                 send_to_esp(preset)
-                time.sleep(POST_PRESET_DELAY)
+                time.sleep(CONFIG["esp"]["post_preset_delay"])
                 send_to_esp(0)
-                time.sleep(POST_NEUTRAL_DELAY)
+                time.sleep(CONFIG["esp"]["post_neutral_delay"])
 
-            # Referensi TIDAK di-refresh sekarang, coba lagi di siklus refresh berikutnya
-            last_refresh_time = time.time()  # tetap update supaya tidak spam retry tiap frame
+            last_refresh_time = time.time()
             last_activity_time = time.time()
 
     # ===== Reclassify berkala selama objek masih dianggap ada (bedakan stuck vs objek baru) =====
     if object_present and next_reclassify_time is not None and time.time() >= next_reclassify_time:
+        confidence_threshold = CONFIG["model"]["confidence_threshold"]
+        label_to_preset = CONFIG["model"]["label_to_preset"]
+        reclassify_cfg = CONFIG["reclassify"]
+
         if current_bbox is not None:
             rx, ry, rw, rh = current_bbox
             recheck_crop = frame[ry:ry+rh, rx:rx+rw]
         else:
-            recheck_crop = frame  # fallback kalau bbox somehow kosong
+            recheck_crop = frame
 
         rc_label, rc_conf, _ = classify(recheck_crop)
 
-        if rc_label == 'background' and rc_conf >= CONFIDENCE_THRESHOLD:
+        if rc_label == 'background' and rc_conf >= confidence_threshold:
             print(">>> [RECLASSIFY] Piringan terkonfirmasi kosong, siap terima objek baru.\n")
             object_present = False
             last_preset_sent = None
@@ -620,21 +624,19 @@ while True:
             immediate_confirm_count = 0
             detection_start_time = None
 
-        elif rc_conf >= CONFIDENCE_THRESHOLD and rc_label in label_to_preset:
+        elif rc_conf >= confidence_threshold and rc_label in label_to_preset:
             rc_preset = label_to_preset[rc_label]
 
             if rc_preset == last_preset_sent:
-                # objek sama, masih nyangkut -> retry, tapi dibatasi cooldown biar ga spam ESP
-                if time.time() - last_stuck_retry_time >= STUCK_RESEND_COOLDOWN:
+                if time.time() - last_stuck_retry_time >= reclassify_cfg["stuck_resend_cooldown"]:
                     print(f">>> [RECLASSIFY] Objek sama ({rc_label}) masih nyangkut, retry preset {rc_preset}\n")
                     send_to_esp(rc_preset)
-                    time.sleep(POST_PRESET_DELAY)
+                    time.sleep(CONFIG["esp"]["post_preset_delay"])
                     send_to_esp(0)
-                    time.sleep(POST_NEUTRAL_DELAY)
+                    time.sleep(CONFIG["esp"]["post_neutral_delay"])
                     last_stuck_retry_time = time.time()
                     last_activity_time = time.time()
             else:
-                # label beda dari preset terakhir -> ini objek BARU, proses seperti deteksi baru
                 print(f">>> [RECLASSIFY] Objek baru terdeteksi: {rc_label} ({rc_conf*100:.2f}%)\n")
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                 save_path = os.path.join(CAPTURE_DIR, rc_label, f"{timestamp}.jpg")
@@ -644,13 +646,12 @@ while True:
                     writer.writerow([timestamp, rc_label, f"{rc_conf:.4f}", "", "", "", "", ""])
 
                 send_to_esp(rc_preset)
-                time.sleep(POST_PRESET_DELAY)
+                time.sleep(CONFIG["esp"]["post_preset_delay"])
                 send_to_esp(0)
-                time.sleep(POST_NEUTRAL_DELAY)
+                time.sleep(CONFIG["esp"]["post_neutral_delay"])
                 last_preset_sent = rc_preset
                 last_activity_time = time.time()
-        # else: confidence rendah/ambigu, biarkan, coba lagi di siklus reclassify berikutnya
 
-        next_reclassify_time = time.time() + RECLASSIFY_INTERVAL
+        next_reclassify_time = time.time() + reclassify_cfg["interval"]
 
     prev_gray = gray.copy()
