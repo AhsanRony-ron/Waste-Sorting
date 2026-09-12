@@ -1,11 +1,14 @@
 import tensorflow as tf
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
 from tensorflow.keras.models import Model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 from sklearn.utils.class_weight import compute_class_weight
+from sklearn.metrics import confusion_matrix, classification_report
 
 DATASET_DIR = "dataset"
 IMG_SIZE = (224, 224)
@@ -47,13 +50,13 @@ val_gen = val_datagen.flow_from_directory(
     batch_size=BATCH_SIZE,
     class_mode='categorical',
     subset='validation',
-    shuffle=False
+    shuffle=False   # PENTING: jangan diubah ke True, supaya urutan y_true & y_pred nanti tetap sinkron
 )
 
 print("Kelas terdeteksi:", train_gen.class_indices)
 NUM_CLASSES = len(train_gen.class_indices)
 
-# ===== Hitung class weight otomatis (BARU) =====
+# ===== Hitung class weight otomatis =====
 # Karena kertas & plastik sekarang jauh lebih banyak, ini kasih bobot lebih
 # ke kelas yang datanya lebih sedikit (misal kaleng), biar model tidak bias
 labels = train_gen.classes
@@ -81,7 +84,7 @@ model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
               loss='categorical_crossentropy', metrics=['accuracy'])
 model.summary()
 
-# ===== Callbacks (BARU) =====
+# ===== Callbacks =====
 checkpoint = ModelCheckpoint(
     "waste_classifier_best.keras",
     monitor='val_accuracy',
@@ -113,13 +116,13 @@ history_head = model.fit(
     callbacks=[checkpoint, early_stop, reduce_lr]
 )
 
-# ===== TAHAP 2: Fine-tuning, unfreeze sebagian layer akhir MobileNetV2 (BARU) =====
+# ===== TAHAP 2: Fine-tuning, unfreeze sebagian layer akhir MobileNetV2 =====
 print("\n===== TAHAP 2: Fine-tuning sebagian layer MobileNetV2 =====\n")
 base_model.trainable = True
 
 # Cuma unfreeze beberapa layer terakhir, sisanya tetap freeze
 # supaya tidak merusak fitur low-level yang sudah bagus dari ImageNet
-FINE_TUNE_AT = len(base_model.layers) - 30
+FINE_TUNE_AT = len(base_model.layers) - 20
 for layer in base_model.layers[:FINE_TUNE_AT]:
     layer.trainable = False
 
@@ -140,7 +143,95 @@ model.save("waste_classifier_final.keras")
 print("\nModel final tersimpan sebagai waste_classifier_final.keras")
 print("Model terbaik (val_accuracy tertinggi) tersimpan sebagai waste_classifier_best.keras")
 
-# ===== Evaluasi akhir =====
+# ===== Evaluasi akhir (angka ringkas) =====
 final_val_loss, final_val_acc = model.evaluate(val_gen)
 print(f"\nFinal validation accuracy: {final_val_acc*100:.2f}%")
 print(f"Final validation loss: {final_val_loss:.4f}")
+
+
+# ============================================================
+# ===== TAMBAHAN UNTUK SLIDE 5 (mulai dari sini) ============
+# ============================================================
+
+# ------------------------------------------------------------
+# POIN 2 SLIDE 5: Grafik Training Loss & Accuracy per epoch
+# (gabungan histori tahap 1 + tahap 2)
+# ------------------------------------------------------------
+acc = history_head.history['accuracy'] + history_finetune.history['accuracy']
+val_acc = history_head.history['val_accuracy'] + history_finetune.history['val_accuracy']
+loss = history_head.history['loss'] + history_finetune.history['loss']
+val_loss = history_head.history['val_loss'] + history_finetune.history['val_loss']
+
+epochs_range = range(len(acc))
+
+plt.figure(figsize=(12, 5))
+
+plt.subplot(1, 2, 1)
+plt.plot(epochs_range, acc, label='Training Accuracy')
+plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+plt.axvline(x=len(history_head.history['accuracy']), color='gray',
+            linestyle='--', label='Mulai Fine-tuning')
+plt.legend(loc='lower right')
+plt.title('Training vs Validation Accuracy')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+
+plt.subplot(1, 2, 2)
+plt.plot(epochs_range, loss, label='Training Loss')
+plt.plot(epochs_range, val_loss, label='Validation Loss')
+plt.axvline(x=len(history_head.history['loss']), color='gray',
+            linestyle='--', label='Mulai Fine-tuning')
+plt.legend(loc='upper right')
+plt.title('Training vs Validation Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+
+plt.tight_layout()
+plt.savefig('training_curve.png', dpi=150)
+plt.show()
+print("\n[OK] Grafik training curve tersimpan sebagai training_curve.png")
+print(f"     -> Training loss akhir  : {loss[-1]:.4f}")
+print(f"     -> Validation loss akhir: {val_loss[-1]:.4f}")
+
+
+# ------------------------------------------------------------
+# POIN 1 SLIDE 5: Confusion Matrix + Classification Report
+# (dihitung dari val_gen, karena tidak ada test set terpisah)
+# ------------------------------------------------------------
+val_gen.reset()  # WAJIB, biar urutan prediksi cocok dengan val_gen.classes
+y_true = val_gen.classes
+y_pred_probs = model.predict(val_gen, verbose=1)
+y_pred = np.argmax(y_pred_probs, axis=1)
+
+class_names = list(val_gen.class_indices.keys())
+
+cm = confusion_matrix(y_true, y_pred)
+print("\n===== Confusion Matrix =====")
+print(cm)
+
+plt.figure(figsize=(7, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+            xticklabels=class_names, yticklabels=class_names)
+plt.xlabel('Prediksi')
+plt.ylabel('Label Sebenarnya')
+plt.title('Confusion Matrix - Klasifikasi Sampah')
+plt.tight_layout()
+plt.savefig('confusion_matrix.png', dpi=150)
+plt.show()
+print("[OK] Confusion matrix tersimpan sebagai confusion_matrix.png")
+
+report = classification_report(y_true, y_pred, target_names=class_names, digits=4)
+print("\n===== Classification Report =====")
+print(report)
+
+with open('classification_report.txt', 'w') as f:
+    f.write(report)
+print("[OK] Classification report tersimpan sebagai classification_report.txt")
+
+print("\n===== SELESAI =====")
+print("File yang dihasilkan untuk slide 5:")
+print("  - training_curve.png           -> untuk Poin 2 (Loss Function)")
+print("  - confusion_matrix.png         -> untuk Poin 1 (Evaluasi Klasifikasi)")
+print("  - classification_report.txt    -> untuk Poin 1 (angka precision/recall/F1)")
+print("\nCatatan: untuk Poin 3 (Inference Time & FPS), gunakan hasil_pengujian.csv")
+print("dari pengujian real-time di Raspberry Pi (bukan dari script ini).")

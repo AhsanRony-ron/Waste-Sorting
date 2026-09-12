@@ -3,6 +3,7 @@ import os
 import glob
 import time
 import uuid
+import socket
 import subprocess
 from telegram.ext import Application, CommandHandler
 
@@ -73,10 +74,59 @@ async def cmd_preset(update, context):
     preset = int(context.args[0])
     write_command("manual_preset", update.effective_chat.id, {"preset": preset})
     await update.message.reply_text(f"Mengirim preset manual {preset}...")
- 
- 
+
+
 # ===================== Command yang dieksekusi langsung di sini =====================
- 
+
+def get_local_ip():
+    """
+    Ambil IP lokal yang benar-benar dipakai untuk koneksi keluar (bukan 127.0.0.1),
+    tanpa perlu benar-benar mengirim data kemana pun.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except OSError:
+        ip = None
+    finally:
+        s.close()
+    return ip
+
+
+def get_all_ips():
+    """
+    Fallback/pelengkap: minta semua IP dari `hostname -I` (berguna kalau raspi
+    punya beberapa interface, misal eth0 + wlan0 sekaligus).
+    """
+    try:
+        result = subprocess.run(
+            ["hostname", "-I"],
+            capture_output=True, text=True, timeout=5, check=True,
+        )
+        return result.stdout.split()
+    except (subprocess.SubprocessError, OSError):
+        return []
+
+
+async def cmd_ip(update, context):
+    primary_ip = get_local_ip()
+    all_ips = get_all_ips()
+
+    if not primary_ip and not all_ips:
+        await update.message.reply_text("Gagal mengambil IP address, cek koneksi jaringan raspi.")
+        return
+
+    lines = ["*IP address raspi saat ini:*"]
+    if primary_ip:
+        lines.append(f"Utama: `{primary_ip}`")
+    other_ips = [ip for ip in all_ips if ip != primary_ip]
+    if other_ips:
+        lines.append("Lainnya: " + ", ".join(f"`{ip}`" for ip in other_ips))
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 async def cmd_restart(update, context):
     await update.message.reply_text("Merestart program utama...")
     try:
@@ -100,6 +150,7 @@ HELP_TEXT = (
     "/camera - Ambil snapshot posisi kamera saat ini\n"
     "/preset <0-5> - Gerakkan piringan ke preset tertentu (testing mekanik)\n"
     "/refresh - Paksa refresh referensi background\n"
+    "/ip - Kirim IP address raspi saat ini\n"
     "/restart - Restart program utama\n"
     "/help - Tampilkan daftar perintah ini"
 )
@@ -178,6 +229,7 @@ def main():
     app.add_handler(CommandHandler("camera", cmd_camera))
     app.add_handler(CommandHandler("preset", cmd_preset))
     app.add_handler(CommandHandler("refresh", cmd_refresh))
+    app.add_handler(CommandHandler("ip", cmd_ip))
     app.add_handler(CommandHandler("restart", cmd_restart))
  
     app.job_queue.run_repeating(poll_events, interval=POLL_INTERVAL_SEC, first=0)

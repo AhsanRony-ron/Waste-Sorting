@@ -1,0 +1,11 @@
+              precision    recall  f1-score   support
+
+  background     0.8200    0.9762    0.8913        42
+        daun     0.3922    1.0000    0.5634        20
+      kaleng     0.8611    0.9254    0.8921       134
+      kertas     0.9873    0.6933    0.8146       225
+     plastik     0.8402    0.9154    0.8762       201
+
+    accuracy                         0.8441       622
+   macro avg     0.7802    0.9021    0.8075       622
+weighted avg     0.8822    0.8441    0.8483       622
