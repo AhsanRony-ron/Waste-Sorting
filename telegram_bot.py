@@ -173,6 +173,12 @@ def handle_sort_result(data):
     for cname, score in sorted(all_scores.items(), key=lambda x: x[1], reverse=True):
         caption += f"  {cname}: {score*100:.1f}%\n"
 
+    bin_capacities = data.get("bin_capacities") or {}
+    if bin_capacities:
+        caption += "\n*Kapasitas tempat sampah:*\n"
+        for label, pct in bin_capacities.items():
+            caption += f"  {label}: {pct:.0f}%\n"
+
     return caption, data.get("image_path")
  
  

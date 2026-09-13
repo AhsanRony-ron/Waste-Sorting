@@ -14,13 +14,13 @@ camera:
   frame_height: 1080
   auto_exposure: 1          # 1 = Manual Mode (punya webcam UGREEN kamu)
   target_fps: 30
-  exposure_time_absolute: 300   # range 1-5000, default pabrik 157
+  exposure_time_absolute: 500   # range 1-5000, default pabrik 157
   auto_wb: 1                # 0 = OFF (manual).
   wb_temperature: 4600      # range 2800-6500, aktif hanya kalau auto_wb: 0
-  brightness: 20             # range -64..64
+  brightness: 0             # range -64..64
   contrast: 34              # range 0..64
   saturation: 64            # range 0..128
-  gain: 0                   # range 0..100
+  gain: 50                   # range 0..100
 
 # --- Crop & koreksi warna software ---
 # Dibaca ulang tiap frame, langsung berubah tanpa restart.
@@ -51,6 +51,26 @@ detection:
 refresh:
   force_refresh_timeout: 20.0
   refresh_cooldown: 30.0
+
+# --- Sensor kapasitas tempat sampah (ultrasonic dari ESP) ---
+# ESP kirim baris serial format: Plastik:12.3 Kaleng:45.6 Kertas:78.9 Daun:23.4
+# (jarak dalam cm). Label harus cocok (case-insensitive) dengan class_names di atas.
+bins:
+  # jeda minimum (detik) antar request kapasitas manual (dipicu /status)
+  check_interval: 3.0   # TODO sesuaikan
+
+  # kalibrasi jarak ultrasonic per tempat sampah -- SAMAKAN dengan
+  # binEmptyCM / binFullCM di main.cpp biar LCD & Telegram konsisten
+  empty_distance_cm:
+    plastik: 30   # TODO
+    kaleng: 30    # TODO
+    kertas: 30    # TODO
+    daun: 30      # TODO
+  full_distance_cm:
+    plastik: 10   # TODO
+    kaleng: 10    # TODO
+    kertas: 10    # TODO
+    daun: 10      # TODO
 
 # --- Komunikasi ke ESP ---
 # serial_port & baud_rate cuma dipakai sekali saat program start

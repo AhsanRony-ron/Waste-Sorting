@@ -180,6 +180,71 @@ os.makedirs(COMMANDS_DIR, exist_ok=True)
 os.makedirs(COMMANDS_DONE_DIR, exist_ok=True)
 os.makedirs(DEBUG_CAPTURE_DIR, exist_ok=True)
 
+def compute_bin_capacity_percent(label, distance_cm):
+    bins_cfg = CONFIG["bins"]
+    empty_d = bins_cfg["empty_distance_cm"][label]
+    full_d = bins_cfg["full_distance_cm"][label]
+    if empty_d == full_d:
+        return 0.0
+    pct = (empty_d - distance_cm) / (empty_d - full_d) * 100.0
+    return float(np.clip(pct, 0, 100))
+
+
+def _resolve_bin_label(key):
+    # ESP sekarang kirim nama label langsung (Plastik/Kaleng/Kertas/Daun),
+    # jadi cukup lowercase & cocokkan ke key kalibrasi di config.
+    key_lower = key.strip().lower()
+    if key_lower in CONFIG["bins"]["empty_distance_cm"]:
+        return key_lower
+    return None
+
+
+def read_esp_sensor_data():
+    """
+    Baca semua baris serial yang sudah masuk dari ESP (non-blocking --
+    cuma proses kalau ser.in_waiting > 0). Dipanggil tiap iterasi loop
+    utama, jadi update kapasitas gak tergantung siapa yang memicu.
+    """
+    while ser.in_waiting > 0:
+        try:
+            raw = ser.readline()
+        except Exception:
+            break
+
+        line = raw.decode(errors="ignore").strip()
+        if not line or ":" not in line:
+            continue  # bukan baris sensor, mungkin log lain dari ESP
+
+        for part in line.replace(",", " ").split():
+            key, sep, val = part.partition(":")
+            if not sep:
+                continue
+
+            label = _resolve_bin_label(key)
+            if label is None:
+                continue
+            try:
+                distance = float(val.strip())
+            except ValueError:
+                continue
+
+            bin_distance_cm[label] = distance
+            bin_capacity_percent[label] = compute_bin_capacity_percent(label, distance)
+
+
+def request_bin_capacity():
+    """
+    Kirim command "c" ke ESP -- dipanggil saat ada command pengecekan
+    (misal /status), BUKAN polling periodik, karena ESP sudah kirim data
+    otomatis tiap ULTRASONIC_READ_INTERVAL_MS. check_interval di config
+    cuma jadi jeda minimum kalau beberapa command mepet-mepetan.
+    Non-blocking -- balasannya diproses read_esp_sensor_data() belakangan.
+    """
+    global last_capacity_request_time
+    interval = CONFIG["bins"]["check_interval"]
+    if time.time() - last_capacity_request_time >= interval:
+        ser.write(b"c\n")
+        last_capacity_request_time = time.time()
 
 def write_event(event_type, data):
     fname = f"{time.time_ns()}.json"
@@ -193,6 +258,9 @@ def write_event(event_type, data):
 paused = False
 last_ping_sent = 0
 
+bin_capacity_percent = {}   # {label: persentase penuh (0-100)}
+bin_distance_cm = {}        # {label: jarak mentah terakhir (cm), buat debug
+last_capacity_request_time = 0.0
 
 def send_ping():
     global last_ping_sent
@@ -284,8 +352,18 @@ def get_cpu_temp():
         return None
 
 def handle_status(cmd):
+    request_bin_capacity() 
+
     cpu_temp = get_cpu_temp()
     cpu_temp_str = f"{cpu_temp:.1f}°C" if cpu_temp is not None else "N/A (bukan Raspberry Pi?)"
+
+    # <-- tambahan
+    if bin_capacity_percent:
+        capacity_str = "\n".join(
+            f"  {label}: {pct:.0f}%" for label, pct in bin_capacity_percent.items()
+        )
+    else:
+        capacity_str = "  (belum ada data sensor dari ESP)"
 
     write_event("command_result", {
         "command_id": cmd["id"], "command": "status", "chat_id": cmd["chat_id"], "success": True,
@@ -294,7 +372,8 @@ def handle_status(cmd):
             f"Object present: {object_present}\n"
             f"Last preset: {last_preset_sent}\n"
             f"FPS kamera: {current_fps:.1f}\n"
-            f"Suhu prosesor: {cpu_temp_str}"
+            f"Suhu prosesor: {cpu_temp_str}\n"
+            f"Kapasitas tempat sampah:\n{capacity_str}"
         )
     })
 
@@ -414,6 +493,7 @@ while True:
 
     send_ping()
     poll_commands(frame)  # camera_check pakai frame yang sudah di-crop & dikoreksi warnanya
+    read_esp_sensor_data()
 
     det = CONFIG["detection"]
     blur_k = CONFIG["preprocessing"]["gaussian_blur_kernel"]
@@ -527,6 +607,8 @@ while True:
                     "inference_ms": round(infer_duration * 1000, 2),
                     "total_ms": round(total_duration * 1000, 2),
                     "all_scores": {cname: float(all_scores[i]) for i, cname in enumerate(class_names)},
+                    "bin_capacity_percent": bin_capacity_percent.get(label),
+                    "bin_capacities": dict(bin_capacity_percent),
                 })
 
                 print(f"\n>>> STABIL & VALID [{confidence_mode}] -> disimpan {save_path}")

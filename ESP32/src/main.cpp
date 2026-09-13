@@ -99,15 +99,17 @@ void lcdShowIdle() {
     int pct3 = distanceToPercent(distanceCM[3], binEmptyCM[3], binFullCM[3]);
 
     lcd.setCursor(0, 2);
-    lcd.print("BIN1 ");
+    lcd.print("Plastik ");
     lcd.print(pct0 >= 0 ? String(pct0) + "%" : "N/A");
-    lcd.print(" BIN2 ");
-    lcd.print(pct1 >= 0 ? String(pct1) + "%" : "N/A");
+
+    lcd.setCursor(11, 2);
+    lcd.print("Kaleng ");
+    lcd.print(pct2 >= 0 ? String(pct2) + "%" : "N/A");
 
     lcd.setCursor(0, 3);
-    lcd.print("BIN3 ");
-    lcd.print(pct2 >= 0 ? String(pct2) + "%" : "N/A");
-    lcd.print(" BIN4 ");
+    lcd.print("Kertas ");
+    lcd.print(pct1 >= 0 ? String(pct1) + "%" : "N/A");
+    lcd.print("Daun ");
     lcd.print(pct3 >= 0 ? String(pct3) + "%" : "N/A");
 
     showingIdle = true;
@@ -220,10 +222,10 @@ void loop() {
         lastUltrasonicRead = millis();
 
         // contoh debug, hapus/ganti sesuai kebutuhan logika deteksi objek
-        Serial.print("US1:"); Serial.print(distanceCM[0]);
-        Serial.print(" US2:"); Serial.print(distanceCM[1]);
-        Serial.print(" US3:"); Serial.print(distanceCM[2]);
-        Serial.print(" US4:"); Serial.println(distanceCM[3]);
+        Serial.print("Plastik:"); Serial.print(distanceCM[0]);
+        Serial.print(" Kaleng:"); Serial.print(distanceCM[1]);
+        Serial.print(" Kertas:"); Serial.print(distanceCM[2]);
+        Serial.print(" Daun:"); Serial.println(distanceCM[3]);
             
         
         if (showingIdle) {
@@ -258,10 +260,10 @@ void loop() {
                 if (rxBuffer == "c") {
                     readAllUltrasonic();
 
-                    Serial.print("US1:"); Serial.print(distanceCM[0]);
-                    Serial.print(",US2:"); Serial.print(distanceCM[1]);
-                    Serial.print(",US3:"); Serial.print(distanceCM[2]);
-                    Serial.print(",US4:"); Serial.println(distanceCM[3]);
+                    Serial.print("Plastik:"); Serial.print(distanceCM[0]);
+                    Serial.print(" Kaleng:"); Serial.print(distanceCM[1]);
+                    Serial.print(" Kertas:"); Serial.print(distanceCM[2]);
+                    Serial.print(" Daun:"); Serial.println(distanceCM[3]);
                     
                 } else {
                     // parsing "idx" biasa, atau "idx,label,confidence" dari Python
