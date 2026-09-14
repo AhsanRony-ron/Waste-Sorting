@@ -93,6 +93,7 @@ reclassify:
 # confidence_threshold & label_to_preset dibaca live, tidak perlu restart.
 model:
   path: waste_classifier.tflite
+  preprocessing: "raw"
   confidence_threshold: 0.6
   class_names: [background, daun, kaleng, kertas, plastik]
   label_to_preset:

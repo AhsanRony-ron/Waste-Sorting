@@ -150,7 +150,15 @@ os.makedirs(os.path.join(CAPTURE_DIR, "unknown"), exist_ok=True)
 def classify(cropped_bgr):
     img = cv2.cvtColor(cropped_bgr, cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, (224, 224))
-    img_array = np.array(img, dtype=np.float32) / 255.0
+
+    mode = CONFIG["model"]["preprocessing"]
+    if mode == "scale_255":
+        img_array = np.array(img, dtype=np.float32) / 255.0
+    elif mode == "raw":
+        img_array = np.array(img, dtype=np.float32)  
+    else:
+        raise ValueError(f"preprocessing mode tidak dikenal: {mode}")
+
     img_array = np.expand_dims(img_array, axis=0)
 
     interpreter.set_tensor(input_details[0]['index'], img_array)
