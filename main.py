@@ -87,28 +87,23 @@ def crop_center(frame, width=None, height=None, offset_x=0, offset_y=0):
 
 
 def gray_world_correction(frame, gain_min=0.6, gain_max=1.6):
-    """
-    Menormalkan warna frame dengan asumsi rata-rata warna keseluruhan
-    frame seharusnya netral (abu-abu). Menstabilkan warna/saturasi
-    saat cahaya ambient berubah, tanpa perlu kalibrasi manual berulang.
-
-    gain dibatasi (gain_min..gain_max) supaya tidak overcorrect saat
-    frame didominasi satu warna (misal objek besar berwarna solid).
-    """
-    b, g, r = cv2.split(frame.astype(np.float32))
-    b_avg, g_avg, r_avg = b.mean(), g.mean(), r.mean()
+    # Pakai cv2.mean() -- dihitung native/optimized, jauh lebih cepat
+    # daripada convert seluruh frame ke float32 cuma buat cari rata-rata.
+    b_avg, g_avg, r_avg, _ = cv2.mean(frame)
     gray_avg = (b_avg + g_avg + r_avg) / 3.0
 
     gain_b = np.clip(gray_avg / max(b_avg, 1e-6), gain_min, gain_max)
     gain_g = np.clip(gray_avg / max(g_avg, 1e-6), gain_min, gain_max)
     gain_r = np.clip(gray_avg / max(r_avg, 1e-6), gain_min, gain_max)
 
-    b = np.clip(b * gain_b, 0, 255)
-    g = np.clip(g * gain_g, 0, 255)
-    r = np.clip(r * gain_r, 0, 255)
+    # cv2.convertScaleAbs beroperasi langsung di uint8 dengan saturasi
+    # otomatis (setara clip 0-255), tanpa perlu convert ke float32 dulu.
+    b, g, r = cv2.split(frame)
+    b = cv2.convertScaleAbs(b, alpha=gain_b)
+    g = cv2.convertScaleAbs(g, alpha=gain_g)
+    r = cv2.convertScaleAbs(r, alpha=gain_r)
 
-    return cv2.merge([b, g, r]).astype(np.uint8)
-
+    return cv2.merge([b, g, r])
 
 def preprocess_frame(raw_frame):
     """Crop + koreksi warna, parameter dibaca live dari CONFIG tiap kali dipanggil."""
@@ -488,9 +483,12 @@ print(f"(Buat force-refresh manual dari SSH: touch {CONFIG['paths']['refresh_fla
 print(f"(Ubah config.yaml kapan saja -- otomatis di-reload, tidak perlu restart)\n")
 
 while True:
+    t0 = time.perf_counter()
     reload_config_if_changed()
+    t1 = time.perf_counter()
 
     ret, raw_frame = cap.read()
+    t2 = time.perf_counter()
     if not ret:
         print("Gagal capture frame")
         continue
@@ -498,10 +496,12 @@ while True:
     update_fps()
 
     frame = preprocess_frame(raw_frame)
+    t3 = time.perf_counter()
 
     send_ping()
     poll_commands(frame)  # camera_check pakai frame yang sudah di-crop & dikoreksi warnanya
     read_esp_sensor_data()
+    t4 = time.perf_counter()
 
     det = CONFIG["detection"]
     blur_k = CONFIG["preprocessing"]["gaussian_blur_kernel"]
@@ -781,3 +781,10 @@ while True:
         next_reclassify_time = time.time() + reclassify_cfg["interval"]
 
     prev_gray = gray.copy()
+
+    t5 = time.perf_counter()  # <-- taruh persis setelah ini
+
+    if int(time.time()) % 5 == 0:
+        print(f"reload={(t1-t0)*1000:.1f}ms read={(t2-t1)*1000:.1f}ms "
+              f"preprocess={(t3-t2)*1000:.1f}ms poll={(t4-t3)*1000:.1f}ms "
+              f"diff_dll={(t5-t4)*1000:.1f}ms")
