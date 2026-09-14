@@ -483,12 +483,9 @@ print(f"(Buat force-refresh manual dari SSH: touch {CONFIG['paths']['refresh_fla
 print(f"(Ubah config.yaml kapan saja -- otomatis di-reload, tidak perlu restart)\n")
 
 while True:
-    t0 = time.perf_counter()
     reload_config_if_changed()
-    t1 = time.perf_counter()
 
     ret, raw_frame = cap.read()
-    t2 = time.perf_counter()
     if not ret:
         print("Gagal capture frame")
         continue
@@ -496,12 +493,10 @@ while True:
     update_fps()
 
     frame = preprocess_frame(raw_frame)
-    t3 = time.perf_counter()
 
     send_ping()
     poll_commands(frame)  # camera_check pakai frame yang sudah di-crop & dikoreksi warnanya
     read_esp_sensor_data()
-    t4 = time.perf_counter()
 
     det = CONFIG["detection"]
     blur_k = CONFIG["preprocessing"]["gaussian_blur_kernel"]
@@ -781,10 +776,3 @@ while True:
         next_reclassify_time = time.time() + reclassify_cfg["interval"]
 
     prev_gray = gray.copy()
-
-    t5 = time.perf_counter()  # <-- taruh persis setelah ini
-
-    if int(time.time()) % 5 == 0:
-        print(f"reload={(t1-t0)*1000:.1f}ms read={(t2-t1)*1000:.1f}ms "
-              f"preprocess={(t3-t2)*1000:.1f}ms poll={(t4-t3)*1000:.1f}ms "
-              f"diff_dll={(t5-t4)*1000:.1f}ms")
