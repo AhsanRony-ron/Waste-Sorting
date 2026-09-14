@@ -99,17 +99,19 @@ void lcdShowIdle() {
     int pct3 = distanceToPercent(distanceCM[3], binEmptyCM[3], binFullCM[3]);
 
     lcd.setCursor(0, 2);
-    lcd.print("Plastik ");
+    lcd.print("PLTK ");
     lcd.print(pct0 >= 0 ? String(pct0) + "%" : "N/A");
 
     lcd.setCursor(11, 2);
-    lcd.print("Kaleng ");
+    lcd.print("KLNG ");
     lcd.print(pct2 >= 0 ? String(pct2) + "%" : "N/A");
 
     lcd.setCursor(0, 3);
-    lcd.print("Kertas ");
+    lcd.print("KRTS ");
     lcd.print(pct1 >= 0 ? String(pct1) + "%" : "N/A");
-    lcd.print("Daun ");
+
+    lcd.setCursor(11, 3);
+    lcd.print("DAUN ");
     lcd.print(pct3 >= 0 ? String(pct3) + "%" : "N/A");
 
     showingIdle = true;
@@ -223,8 +225,8 @@ void loop() {
 
         // contoh debug, hapus/ganti sesuai kebutuhan logika deteksi objek
         Serial.print("Plastik:"); Serial.print(distanceCM[0]);
-        Serial.print(" Kaleng:"); Serial.print(distanceCM[1]);
-        Serial.print(" Kertas:"); Serial.print(distanceCM[2]);
+        Serial.print(" Kertas:"); Serial.print(distanceCM[1]);
+        Serial.print(" Kaleng:"); Serial.print(distanceCM[2]);
         Serial.print(" Daun:"); Serial.println(distanceCM[3]);
             
         
@@ -261,8 +263,8 @@ void loop() {
                     readAllUltrasonic();
 
                     Serial.print("Plastik:"); Serial.print(distanceCM[0]);
-                    Serial.print(" Kaleng:"); Serial.print(distanceCM[1]);
-                    Serial.print(" Kertas:"); Serial.print(distanceCM[2]);
+                    Serial.print(" Kertas:"); Serial.print(distanceCM[1]);
+                    Serial.print(" Kaleng:"); Serial.print(distanceCM[2]);
                     Serial.print(" Daun:"); Serial.println(distanceCM[3]);
                     
                 } else {
