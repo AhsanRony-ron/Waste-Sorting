@@ -20,7 +20,7 @@ camera:
   brightness: 0             # range -64..64
   contrast: 34              # range 0..64
   saturation: 64            # range 0..128
-  gain: 50                   # range 0..100
+  gain: 20                   # range 0..100
 
 # --- Crop & koreksi warna software ---
 # Dibaca ulang tiap frame, langsung berubah tanpa restart.
