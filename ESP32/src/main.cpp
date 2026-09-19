@@ -192,9 +192,9 @@ void lcdShowBinFull() {
 }
 
 void lcdShowStuck() {
-    lcdLine(0, "OBJEK TAK DIKENALI");
-    lcdLine(1, "Cek manual / balas");
-    lcdLine(2, "Telegram (/preset)");
+    lcdLine(0, "OBJEK TERSANGKUT!");
+    lcdLine(1, "TOLONG AMBIL LAGI!");
+    lcdLine(2, "");
     lcdLine(3, "");
     showingIdle = false;
 }

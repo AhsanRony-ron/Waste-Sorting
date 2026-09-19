@@ -860,7 +860,10 @@ while True:
                 rc_preset = label_to_preset[rc_label]
 
                 if rc_preset == last_preset_sent:
-                    if time.time() - last_stuck_retry_time >= reclassify_cfg["stuck_resend_cooldown"]:
+                    if stuck_alert_active:
+                        pass  # sudah dianggap nyangkut & alert aktif -- percuma coba
+                              # gerakin lagi, tunggu intervensi manual (Telegram/ambil objek)
+                    elif time.time() - last_stuck_retry_time >= reclassify_cfg["stuck_resend_cooldown"]:
                         print(f">>> [RECLASSIFY] Objek sama ({rc_label}) masih nyangkut, retry preset {rc_preset}\n")
                         send_to_esp(rc_preset, rc_label, rc_conf)
                         time.sleep(CONFIG["esp"]["post_preset_delay"])
@@ -869,7 +872,7 @@ while True:
                         last_stuck_retry_time = time.time()
                         last_activity_time = time.time()
                         stuck_retry_count += 1
-                        check_stuck_alert() 
+                        check_stuck_alert()
                 else:
                     print(f">>> [RECLASSIFY] Objek baru terdeteksi: {rc_label} ({rc_conf*100:.2f}%)\n")
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")

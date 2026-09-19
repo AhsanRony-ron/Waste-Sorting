@@ -58,7 +58,7 @@ refresh:
 bins:
   # jeda minimum (detik) antar request kapasitas manual (dipicu /status)
   check_interval: 3.0   # TODO sesuaikan
-  full_threshold_percent: 90   # TODO sesuaikan, di atas ini dianggap "penuh"
+  full_threshold_percent: 100   # TODO sesuaikan, di atas ini dianggap "penuh"
 
   # kalibrasi jarak ultrasonic per tempat sampah -- SAMAKAN dengan
   # binEmptyCM / binFullCM di main.cpp biar LCD & Telegram konsisten
@@ -88,8 +88,8 @@ esp:
 # --- Reclassify berkala saat objek masih di piringan ---
 reclassify:
   interval: 2.0
-  stuck_resend_cooldown: 5.0
-  stuck_max_retries: 3
+  stuck_resend_cooldown: 2.0
+  stuck_max_retries: 2
   low_conf_max_attempts: 5
 
 # --- Model klasifikasi ---
@@ -98,7 +98,7 @@ reclassify:
 model:
   path: waste_classifier.tflite
   preprocessing: "raw"
-  confidence_threshold: 0.6
+  confidence_threshold: 0.7
   class_names: [background, daun, kaleng, kertas, plastik]
   label_to_preset:
     kertas: 1
