@@ -299,17 +299,6 @@ void loop() {
         lastStuckAlertBuzz = millis();
     }
 
-    if (binFullAlertActive && millis() - lastFullAlertBuzz > FULL_ALERT_INTERVAL_MS) {
-        buzzBeep(FULL_ALERT_BUZZ_COUNT, FULL_ALERT_BUZZ_ON_MS, FULL_ALERT_BUZZ_GAP_MS);
-        lcdShowBinFull(binFullAlertLabel);
-        lastFullAlertBuzz = millis();
-    }
-
-    if (stuckAlertActive && millis() - lastStuckAlertBuzz > STUCK_ALERT_INTERVAL_MS) {
-        buzzBeep(STUCK_ALERT_BUZZ_COUNT, STUCK_ALERT_BUZZ_ON_MS, STUCK_ALERT_BUZZ_GAP_MS);
-        lcdShowStuck();
-        lastStuckAlertBuzz = millis();
-    }
 
     piOnline = (millis() - lastPingFromPi) < PI_TIMEOUT_MS;
 
@@ -418,6 +407,16 @@ void loop() {
         } else {
             rxBuffer += c;
         }
+    }
+
+    if (binFullAlertActive && millis() - lastFullAlertReceived > FULL_ALERT_TIMEOUT_MS) {
+        binFullAlertActive = false;
+        lcdShowIdle();
+    }
+
+    if (stuckAlertActive && millis() - lastStuckAlertReceived > STUCK_ALERT_TIMEOUT_MS) {
+        stuckAlertActive = false;
+        lcdShowIdle();
     }
 
     if (!showingIdle && !binFullAlertActive && !stuckAlertActive && millis() - lastActionTime > IDLE_TIMEOUT_MS) {
