@@ -187,7 +187,19 @@ def handle_command_result(data):
     caption = f"[{prefix}] /{data.get('command')}\n{data.get('message', '')}"
     return caption, data.get("image_path")
  
- 
+def handle_bin_full_alert(data):
+    caption = (
+        f"⚠️ Tempat sampah *{data['label']}* PENUH ({data.get('percent', 0):.0f}%)\n"
+        f"Tolong segera dikosongkan."
+    )
+    return caption, None
+
+EVENT_HANDLERS = {
+    "sort_result": handle_sort_result,
+    "command_result": handle_command_result,
+    "bin_full_alert": handle_bin_full_alert,   # <-- tambahan
+}
+
 EVENT_HANDLERS = {
     "sort_result": handle_sort_result,
     "command_result": handle_command_result,

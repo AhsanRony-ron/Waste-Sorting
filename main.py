@@ -170,6 +170,11 @@ def send_to_esp(preset_idx):
     ser.write(cmd.encode())
     time.sleep(0.3)
 
+def send_bin_full_alert(label):
+    # 1 jenis notif serial -- ESP yang urus buzzer & tampilan LCD-nya (nyusul)
+    # TODO: format persis disepakati bareng main.cpp, sementara: "FULL:<label>\n"
+    ser.write(f"FULL:{label}\n".encode())
+
 
 # ===================== Sinkronisasi Telegram (file-based queue) =====================
 
@@ -201,6 +206,11 @@ def _resolve_bin_label(key):
         return key_lower
     return None
 
+def is_bin_full(label):
+    pct = bin_capacity_percent.get(label)
+    if pct is None:
+        return False  # TODO: putuskan default kalau data kapasitas belum pernah masuk
+    return pct >= CONFIG["bins"]["full_threshold_percent"]
 
 def read_esp_sensor_data():
     """
@@ -249,6 +259,13 @@ def request_bin_capacity():
         ser.write(b"c\n")
         last_capacity_request_time = time.time()
 
+def notify_bin_full(label, pct):
+    # TODO: masih kirim tiap kejadian dulu -- logika "sekali aja" nyusul nanti
+    write_event("bin_full_alert", {
+        "label": label,
+        "percent": pct,
+    })
+    
 def write_event(event_type, data):
     fname = f"{time.time_ns()}.json"
     tmp_path = os.path.join(EVENTS_DIR, f".tmp_{fname}")
@@ -601,18 +618,19 @@ while True:
                     save_path = os.path.join(CAPTURE_DIR, "unknown", f"{timestamp}_{label}_{confidence:.2f}.jpg")
                 cv2.imwrite(save_path, cropped_object)
 
-                write_event("sort_result", {
-                    "timestamp": timestamp,
-                    "label": label,
-                    "confidence": float(confidence),
-                    "image_path": save_path,
-                    "detection_ms": round(detection_duration * 1000, 2),
-                    "inference_ms": round(infer_duration * 1000, 2),
-                    "total_ms": round(total_duration * 1000, 2),
-                    "all_scores": {cname: float(all_scores[i]) for i, cname in enumerate(class_names)},
-                    "bin_capacity_percent": bin_capacity_percent.get(label),
-                    "bin_capacities": dict(bin_capacity_percent),
-                })
+                if label != 'background':
+                    write_event("sort_result", {
+                        "timestamp": timestamp,
+                        "label": label,
+                        "confidence": float(confidence),
+                        "image_path": save_path,
+                        "detection_ms": round(detection_duration * 1000, 2),
+                        "inference_ms": round(infer_duration * 1000, 2),
+                        "total_ms": round(total_duration * 1000, 2),
+                        "all_scores": {cname: float(all_scores[i]) for i, cname in enumerate(class_names)},
+                        "bin_capacity_percent": bin_capacity_percent.get(label),
+                        "bin_capacities": dict(bin_capacity_percent),
+                    })
 
                 print(f"\n>>> STABIL & VALID [{confidence_mode}] -> disimpan {save_path}")
                 print(f"    Prediksi: {label} ({confidence*100:.2f}%)")
@@ -635,12 +653,22 @@ while True:
 
                 if confidence >= confidence_threshold and label in label_to_preset:
                     preset = label_to_preset[label]
-                    print(f"    -> Kirim preset {preset} ke ESP\n")
-                    send_to_esp(preset)
-                    last_preset_sent = preset
-                    time.sleep(CONFIG["esp"]["post_preset_delay"])
-                    send_to_esp(0)
-                    time.sleep(CONFIG["esp"]["post_neutral_delay"])
+
+                    if is_bin_full(label):
+                        pct = bin_capacity_percent.get(label)
+                        print(f"    -> Bin '{label}' PENUH ({pct:.0f}%), servo TIDAK digerakkan\n")
+                        send_bin_full_alert(label)
+                        notify_bin_full(label, pct)
+                        last_preset_sent = None
+                        # TODO (iterasi berikutnya): state biar reclassify gak nganggep
+                        # ini "objek baru" tiap siklus & gak nulis ulang CSV/foto terus
+                    else:
+                        print(f"    -> Kirim preset {preset} ke ESP\n")
+                        send_to_esp(preset)
+                        last_preset_sent = preset
+                        time.sleep(CONFIG["esp"]["post_preset_delay"])
+                        send_to_esp(0)
+                        time.sleep(CONFIG["esp"]["post_neutral_delay"])
 
                 elif label == 'background':
                     print(f"    -> Terdeteksi background, tidak ada aksi ke ESP")

@@ -58,6 +58,7 @@ refresh:
 bins:
   # jeda minimum (detik) antar request kapasitas manual (dipicu /status)
   check_interval: 3.0   # TODO sesuaikan
+  full_threshold_percent: 90   # TODO sesuaikan, di atas ini dianggap "penuh"
 
   # kalibrasi jarak ultrasonic per tempat sampah -- SAMAKAN dengan
   # binEmptyCM / binFullCM di main.cpp biar LCD & Telegram konsisten

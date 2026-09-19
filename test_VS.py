@@ -126,7 +126,15 @@ os.makedirs(DEBUG_DIR, exist_ok=True)
 def classify(cropped_bgr):
     img = cv2.cvtColor(cropped_bgr, cv2.COLOR_BGR2RGB)
     img = cv2.resize(img, (224, 224))
-    img_array = np.array(img, dtype=np.float32) / 255.0
+
+    mode = CONFIG["model"]["preprocessing"]
+    if mode == "scale_255":
+        img_array = np.array(img, dtype=np.float32) / 255.0
+    elif mode == "raw":
+        img_array = np.array(img, dtype=np.float32)  
+    else:
+        raise ValueError(f"preprocessing mode tidak dikenal: {mode}")
+
     img_array = np.expand_dims(img_array, axis=0)
 
     interpreter.set_tensor(input_details[0]['index'], img_array)
@@ -150,7 +158,7 @@ cap = cv2.VideoCapture(0)
 # Mencegah kamera "meloncat" mengubah exposure/warna sendiri.
 # Sisa variasi cahaya ditangani software lewat gray_world_correction() di atas.
 cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)   # 1 = manual mode (0.25 di beberapa driver Windows/DirectShow)
-cap.set(cv2.CAP_PROP_EXPOSURE, -5)       # sesuaikan nilai sesuai kondisi lighting-mu
+cap.set(cv2.CAP_PROP_EXPOSURE, -3)       # sesuaikan nilai sesuai kondisi lighting-mu
 
 cap.set(cv2.CAP_PROP_AUTO_WB, 1)         # matikan auto white balance
 cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 500)  # kunci di suhu warna tertentu (Kelvin)
