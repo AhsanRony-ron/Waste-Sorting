@@ -739,12 +739,18 @@ while True:
             cv2.imwrite(stuck_path, frame)
 
             if check_confidence >= confidence_threshold and check_label in label_to_preset:
-                preset = label_to_preset[check_label]
-                print(f"    -> Kirim preset {preset} ke ESP buat bersihkan barang nyangkut\n")
-                send_to_esp(preset)
-                time.sleep(CONFIG["esp"]["post_preset_delay"])
-                send_to_esp(0)
-                time.sleep(CONFIG["esp"]["post_neutral_delay"])
+                if is_bin_full(check_label):
+                    pct = bin_capacity_percent.get(check_label)
+                    print(f"    -> Bin '{check_label}' PENUH ({pct:.0f}%), servo TIDAK digerakkan\n")
+                    send_bin_full_alert(check_label)
+                    notify_bin_full(check_label, pct)
+                else:
+                    preset = label_to_preset[check_label]
+                    print(f"    -> Kirim preset {preset} ke ESP buat bersihkan barang nyangkut\n")
+                    send_to_esp(preset)
+                    time.sleep(CONFIG["esp"]["post_preset_delay"])
+                    send_to_esp(0)
+                    time.sleep(CONFIG["esp"]["post_neutral_delay"])
 
             last_refresh_time = time.time()
             last_activity_time = time.time()
@@ -774,32 +780,38 @@ while True:
             detection_start_time = None
 
         elif rc_conf >= confidence_threshold and rc_label in label_to_preset:
-            rc_preset = label_to_preset[rc_label]
+            if is_bin_full(rc_label):
+                pct = bin_capacity_percent.get(rc_label)
+                print(f">>> [RECLASSIFY] Bin '{rc_label}' PENUH ({pct:.0f}%), servo TIDAK digerakkan\n")
+                send_bin_full_alert(rc_label)
+                notify_bin_full(rc_label, pct)
+            else:
+                rc_preset = label_to_preset[rc_label]
 
-            if rc_preset == last_preset_sent:
-                if time.time() - last_stuck_retry_time >= reclassify_cfg["stuck_resend_cooldown"]:
-                    print(f">>> [RECLASSIFY] Objek sama ({rc_label}) masih nyangkut, retry preset {rc_preset}\n")
+                if rc_preset == last_preset_sent:
+                    if time.time() - last_stuck_retry_time >= reclassify_cfg["stuck_resend_cooldown"]:
+                        print(f">>> [RECLASSIFY] Objek sama ({rc_label}) masih nyangkut, retry preset {rc_preset}\n")
+                        send_to_esp(rc_preset)
+                        time.sleep(CONFIG["esp"]["post_preset_delay"])
+                        send_to_esp(0)
+                        time.sleep(CONFIG["esp"]["post_neutral_delay"])
+                        last_stuck_retry_time = time.time()
+                        last_activity_time = time.time()
+                else:
+                    print(f">>> [RECLASSIFY] Objek baru terdeteksi: {rc_label} ({rc_conf*100:.2f}%)\n")
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    save_path = os.path.join(CAPTURE_DIR, rc_label, f"{timestamp}.jpg")
+                    cv2.imwrite(save_path, recheck_crop)
+                    with open(LOG_FILE, 'a', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow([timestamp, rc_label, f"{rc_conf:.4f}", "", "", "", "", ""])
+
                     send_to_esp(rc_preset)
                     time.sleep(CONFIG["esp"]["post_preset_delay"])
                     send_to_esp(0)
                     time.sleep(CONFIG["esp"]["post_neutral_delay"])
-                    last_stuck_retry_time = time.time()
+                    last_preset_sent = rc_preset
                     last_activity_time = time.time()
-            else:
-                print(f">>> [RECLASSIFY] Objek baru terdeteksi: {rc_label} ({rc_conf*100:.2f}%)\n")
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                save_path = os.path.join(CAPTURE_DIR, rc_label, f"{timestamp}.jpg")
-                cv2.imwrite(save_path, recheck_crop)
-                with open(LOG_FILE, 'a', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow([timestamp, rc_label, f"{rc_conf:.4f}", "", "", "", "", ""])
-
-                send_to_esp(rc_preset)
-                time.sleep(CONFIG["esp"]["post_preset_delay"])
-                send_to_esp(0)
-                time.sleep(CONFIG["esp"]["post_neutral_delay"])
-                last_preset_sent = rc_preset
-                last_activity_time = time.time()
 
         next_reclassify_time = time.time() + reclassify_cfg["interval"]
 
