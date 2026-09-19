@@ -165,8 +165,11 @@ def classify(cropped_bgr):
     return class_names[predicted_idx], confidence, output
 
 
-def send_to_esp(preset_idx):
-    cmd = f"{preset_idx}\n"
+def send_to_esp(preset_idx, label=None, confidence=None):
+    if label is not None and confidence is not None:
+        cmd = f"{preset_idx},{label},{confidence*100:.2f}\n"
+    else:
+        cmd = f"{preset_idx}\n"
     ser.write(cmd.encode())
     time.sleep(0.3)
 
@@ -174,6 +177,9 @@ def send_bin_full_alert(label):
     # 1 jenis notif serial -- ESP yang urus buzzer & tampilan LCD-nya (nyusul)
     # TODO: format persis disepakati bareng main.cpp, sementara: "FULL:<label>\n"
     ser.write(f"FULL:{label}\n".encode())
+
+def send_reclassify_progress(label, confidence, attempt, max_attempts):
+    ser.write(f"RC:{label},{confidence*100:.1f},{attempt},{max_attempts}\n".encode())
 
 def send_stuck_alert():
     ser.write(b"STUCK\n")
@@ -810,7 +816,7 @@ while True:
                 else:
                     preset = label_to_preset[check_label]
                     print(f"    -> Kirim preset {preset} ke ESP buat bersihkan barang nyangkut\n")
-                    send_to_esp(preset)
+                    send_to_esp(preset, check_label, check_confidence)
                     time.sleep(CONFIG["esp"]["post_preset_delay"])
                     send_to_esp(0)
                     time.sleep(CONFIG["esp"]["post_neutral_delay"])
@@ -858,7 +864,7 @@ while True:
                 if rc_preset == last_preset_sent:
                     if time.time() - last_stuck_retry_time >= reclassify_cfg["stuck_resend_cooldown"]:
                         print(f">>> [RECLASSIFY] Objek sama ({rc_label}) masih nyangkut, retry preset {rc_preset}\n")
-                        send_to_esp(rc_preset)
+                        send_to_esp(rc_preset, rc_label, rc_conf)
                         time.sleep(CONFIG["esp"]["post_preset_delay"])
                         send_to_esp(0)
                         time.sleep(CONFIG["esp"]["post_neutral_delay"])
@@ -875,7 +881,7 @@ while True:
                         writer = csv.writer(f)
                         writer.writerow([timestamp, rc_label, f"{rc_conf:.4f}", "", "", "", "", ""])
 
-                    send_to_esp(rc_preset)
+                    send_to_esp(rc_preset, rc_label, rc_conf)
                     time.sleep(CONFIG["esp"]["post_preset_delay"])
                     send_to_esp(0)
                     time.sleep(CONFIG["esp"]["post_neutral_delay"])
@@ -889,6 +895,8 @@ while True:
             low_conf_attempts.append((rc_label, rc_conf))
             attempt_no = len(low_conf_attempts)
             max_attempts = reclassify_cfg["low_conf_max_attempts"]
+
+            send_reclassify_progress(rc_label, rc_conf, attempt_no, max_attempts)
 
             best_label, best_conf = max(low_conf_attempts, key=lambda x: x[1])
             reached_limit = attempt_no >= max_attempts
@@ -919,7 +927,7 @@ while True:
                         trigger_bin_full(best_label, pct)
                         last_preset_sent = None
                     else:
-                        send_to_esp(best_preset)
+                        send_to_esp(best_preset, best_label, best_conf)
                         time.sleep(CONFIG["esp"]["post_preset_delay"])
                         send_to_esp(0)
                         time.sleep(CONFIG["esp"]["post_neutral_delay"])

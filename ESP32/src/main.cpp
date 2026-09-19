@@ -199,6 +199,28 @@ void lcdShowStuck() {
     showingIdle = false;
 }
 
+void lcdShowLowConfRetry(String label, float confidence, int attempt, int maxAttempts) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Deteksi : ");
+    lcd.print(label);
+    lcd.setCursor(0, 1);
+    lcd.print("Conf.   : ");
+    lcd.print(confidence, 1);
+    lcd.print(" %");
+    lcd.setCursor(0, 2);
+    lcd.print("Conf terlalu rendah,");
+    lcd.setCursor(0, 3);
+    lcd.print("coba lagi (");
+    lcd.print(attempt);
+    lcd.print("/");
+    lcd.print(maxAttempts);
+    lcd.print(")");
+
+    showingIdle = false;
+    lastActionTime = millis();
+}
+
 // =============================================================
 // ALERT (FULL & STUCK pakai mekanisme yang sama)
 // =============================================================
@@ -406,9 +428,18 @@ void handleLine(String line) {
     } else if (line == "STUCK") {
         alertReceived(stuckAlert);
 
-    } else if (line == "STUCKCLR") {
-        alertClear(stuckAlert);
+    } else if (rxBuffer.startsWith("RC:")) {
+    String payload = rxBuffer.substring(3);
+    int c1 = payload.indexOf(',');
+    int c2 = payload.indexOf(',', c1 + 1);
+    int c3 = payload.indexOf(',', c2 + 1);
 
+    String label = payload.substring(0, c1);
+    float conf = payload.substring(c1 + 1, c2).toFloat();
+    int attempt = payload.substring(c2 + 1, c3).toInt();
+    int maxAttempts = payload.substring(c3 + 1).toInt();
+
+    lcdShowLowConfRetry(label, conf, attempt, maxAttempts);
     } else {
         handlePresetCommand(line);
     }
