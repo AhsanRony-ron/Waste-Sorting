@@ -31,6 +31,12 @@
 #define ULTRASONIC_READ_INTERVAL_MS 2000 // seberapa sering baca ke-4 sensor di loop()
 
 #define PI_TIMEOUT_MS 7000
+
+#define FULL_ALERT_BUZZ_COUNT 3     // TODO: sesuaikan biar beda pola sama online/offline Pi (2x/1x)
+#define FULL_ALERT_BUZZ_ON_MS 150
+#define FULL_ALERT_BUZZ_GAP_MS 150
+
+
 unsigned long lastPingFromPi = 0;
 bool piOnline = false;
 bool piOnlinePrev = false;
@@ -151,6 +157,24 @@ void lcdShowResult(int idx, String label, float confidence, bool hasLabel) {
     lastActionTime = millis();
 }
 
+void lcdShowBinFull(String label) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("TOLONG AMBIL LAGI");
+    lcd.setCursor(0, 1);
+    lcd.print("SAMPAHNYA!");
+    lcd.setCursor(0, 2);
+    lcd.print("Bin ");
+    lcd.print(label);
+    lcd.setCursor(0, 3);
+    lcd.print("PENUH");
+
+    showingIdle = false;
+    lastActionTime = millis();   // TODO: putuskan apa layar ini boleh auto-balik idle
+                                  // lewat IDLE_TIMEOUT_MS kayak lcdShowResult, atau
+                                  // harus tetap nyala sampai ada sinyal lain dari Pi
+}
+
 // trigger 10us lalu ukur lebar pulsa HIGH di echoPin tertentu
 // return -1 kalau timeout (di luar jangkauan / gak ada pantulan)
 float readUltrasonicCM(uint8_t echoPin) {
@@ -259,7 +283,7 @@ void loop() {
                     // gak perlu proses lain, cuma nandain Pi masih hidup
                 }
 
-                if (rxBuffer == "c") {
+                else if (rxBuffer == "c") {
                     readAllUltrasonic();
 
                     Serial.print("Plastik:"); Serial.print(distanceCM[0]);
@@ -267,6 +291,12 @@ void loop() {
                     Serial.print(" Kaleng:"); Serial.print(distanceCM[2]);
                     Serial.print(" Daun:"); Serial.println(distanceCM[3]);
                     
+                }
+                else if (rxBuffer.startsWith("FULL:")) {
+                    String label = rxBuffer.substring(5);   // setelah "FULL:"
+                    buzzBeep(FULL_ALERT_BUZZ_COUNT, FULL_ALERT_BUZZ_ON_MS, FULL_ALERT_BUZZ_GAP_MS);
+                    lcdShowBinFull(label);
+                
                 } else {
                     // parsing "idx" biasa, atau "idx,label,confidence" dari Python
                     int comma1 = rxBuffer.indexOf(',');
