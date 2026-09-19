@@ -197,13 +197,10 @@ def handle_bin_full_alert(data):
 EVENT_HANDLERS = {
     "sort_result": handle_sort_result,
     "command_result": handle_command_result,
-    "bin_full_alert": handle_bin_full_alert,   # <-- tambahan
+    "bin_full_alert": handle_bin_full_alert,
 }
 
-EVENT_HANDLERS = {
-    "sort_result": handle_sort_result,
-    "command_result": handle_command_result,
-}
+
  
  
 async def poll_events(context):
