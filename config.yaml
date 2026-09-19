@@ -88,6 +88,7 @@ esp:
 reclassify:
   interval: 2.0
   stuck_resend_cooldown: 5.0
+  stuck_max_retries: 3
 
 # --- Model klasifikasi ---
 # path & class_names dipakai sekali saat load model -- ubah BUTUH restart.

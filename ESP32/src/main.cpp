@@ -32,10 +32,21 @@
 
 #define PI_TIMEOUT_MS 7000
 
+#define FULL_ALERT_INTERVAL_MS 12000
 #define FULL_ALERT_BUZZ_COUNT 3     // TODO: sesuaikan biar beda pola sama online/offline Pi (2x/1x)
 #define FULL_ALERT_BUZZ_ON_MS 150
 #define FULL_ALERT_BUZZ_GAP_MS 150
+bool binFullAlertActive = false;
+String binFullAlertLabel = "";
+unsigned long lastFullAlertBuzz = 0;
 
+#define STUCK_ALERT_INTERVAL_MS 12000
+#define STUCK_ALERT_BUZZ_COUNT 5      // TODO: bikin beda dari FULL_ALERT (3x) biar kebedain kupingnya
+#define STUCK_ALERT_BUZZ_ON_MS 100
+#define STUCK_ALERT_BUZZ_GAP_MS 100
+
+bool stuckAlertActive = false;
+unsigned long lastStuckAlertBuzz = 0;
 
 unsigned long lastPingFromPi = 0;
 bool piOnline = false;
@@ -175,6 +186,18 @@ void lcdShowBinFull(String label) {
                                   // harus tetap nyala sampai ada sinyal lain dari Pi
 }
 
+void lcdShowStuck() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("OBJEK TAK DIKENALI");
+    lcd.setCursor(0, 1);
+    lcd.print("Cek manual / balas");
+    lcd.setCursor(0, 2);
+    lcd.print("Telegram (/preset)");
+    showingIdle = false;
+    lastActionTime = millis();
+}
+
 // trigger 10us lalu ukur lebar pulsa HIGH di echoPin tertentu
 // return -1 kalau timeout (di luar jangkauan / gak ada pantulan)
 float readUltrasonicCM(uint8_t echoPin) {
@@ -260,6 +283,18 @@ void loop() {
 
     }
 
+    if (binFullAlertActive && millis() - lastFullAlertBuzz > FULL_ALERT_INTERVAL_MS) {
+        buzzBeep(FULL_ALERT_BUZZ_COUNT, FULL_ALERT_BUZZ_ON_MS, FULL_ALERT_BUZZ_GAP_MS);
+        lcdShowBinFull(binFullAlertLabel);   // refresh layar tiap buzz
+        lastFullAlertBuzz = millis();
+    }
+
+    if (stuckAlertActive && millis() - lastStuckAlertBuzz > STUCK_ALERT_INTERVAL_MS) {
+        buzzBeep(STUCK_ALERT_BUZZ_COUNT, STUCK_ALERT_BUZZ_ON_MS, STUCK_ALERT_BUZZ_GAP_MS);
+        lcdShowStuck();
+        lastStuckAlertBuzz = millis();
+    }
+
     piOnline = (millis() - lastPingFromPi) < PI_TIMEOUT_MS;
 
     if (piOnline != piOnlinePrev) {
@@ -291,11 +326,28 @@ void loop() {
                     Serial.print(" Kaleng:"); Serial.print(distanceCM[2]);
                     Serial.print(" Daun:"); Serial.println(distanceCM[3]);
                     
-                }
-                else if (rxBuffer.startsWith("FULL:")) {
-                    String label = rxBuffer.substring(5);   // setelah "FULL:"
+                }  else if (rxBuffer.startsWith("FULL:")) {
+                    binFullAlertLabel = rxBuffer.substring(5);
+                    binFullAlertActive = true;
+
+                    // langsung bunyi pertama kali, jangan nunggu interval pertama lewat
                     buzzBeep(FULL_ALERT_BUZZ_COUNT, FULL_ALERT_BUZZ_ON_MS, FULL_ALERT_BUZZ_GAP_MS);
-                    lcdShowBinFull(label);
+                    lcdShowBinFull(binFullAlertLabel);
+                    lastFullAlertBuzz = millis();
+
+                } else if (rxBuffer == "FULLCLR") {
+                    binFullAlertActive = false;
+                    lcdShowIdle();
+                
+                                } else if (rxBuffer == "STUCK") {
+                    stuckAlertActive = true;
+                    buzzBeep(STUCK_ALERT_BUZZ_COUNT, STUCK_ALERT_BUZZ_ON_MS, STUCK_ALERT_BUZZ_GAP_MS);
+                    lcdShowStuck();
+                    lastStuckAlertBuzz = millis();
+
+                } else if (rxBuffer == "STUCKCLR") {
+                    stuckAlertActive = false;
+                    lcdShowIdle();
                 
                 } else {
                     // parsing "idx" biasa, atau "idx,label,confidence" dari Python
@@ -353,8 +405,7 @@ void loop() {
         }
     }
 
-    // otomatis balik ke layar idle/statistik kalau sudah lewat IDLE_TIMEOUT_MS
-    if (!showingIdle && millis() - lastActionTime > IDLE_TIMEOUT_MS) {
+    if (!showingIdle && !binFullAlertActive && millis() - lastActionTime > IDLE_TIMEOUT_MS) {
         lcdShowIdle();
     }
 }

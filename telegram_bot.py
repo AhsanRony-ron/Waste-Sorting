@@ -194,14 +194,17 @@ def handle_bin_full_alert(data):
     )
     return caption, None
 
+
+def handle_stuck_alert(data):
+    caption = f"🔧 {data.get('message', 'Ada objek nyangkut, cek manual.')}"
+    return caption, None
+
 EVENT_HANDLERS = {
     "sort_result": handle_sort_result,
     "command_result": handle_command_result,
     "bin_full_alert": handle_bin_full_alert,
+    "stuck_alert": handle_stuck_alert,   # <-- tambahan
 }
-
-
- 
  
 async def poll_events(context):
     for path in sorted(glob.glob(os.path.join(EVENTS_DIR, "*.json"))):

@@ -175,6 +175,26 @@ def send_bin_full_alert(label):
     # TODO: format persis disepakati bareng main.cpp, sementara: "FULL:<label>\n"
     ser.write(f"FULL:{label}\n".encode())
 
+def send_stuck_alert():
+    ser.write(b"STUCK\n")
+
+def send_stuck_alert_clear():
+    ser.write(b"STUCKCLR\n")
+
+def notify_stuck(retry_count):
+    write_event("stuck_alert", {
+        "retry_count": retry_count,
+        "message": "Objek gak berhasil diklasifikasi 3x. Balas /preset <0-5> buat tentuin manual.",
+    })
+
+def check_stuck_alert():
+    global stuck_alert_active
+    if stuck_retry_count >= CONFIG["reclassify"]["stuck_max_retries"] and not stuck_alert_active:
+        print(f">>> [STUCK] {stuck_retry_count}x nyangkut, kirim alert\n")
+        send_stuck_alert()
+        notify_stuck(stuck_retry_count)
+        stuck_alert_active = True
+
 
 # ===================== Sinkronisasi Telegram (file-based queue) =====================
 
@@ -277,6 +297,9 @@ def write_event(event_type, data):
 
 paused = False
 last_ping_sent = 0
+
+stuck_retry_count = 0
+stuck_alert_active = False
 
 bin_capacity_percent = {}   # {label: persentase penuh (0-100)}
 bin_distance_cm = {}        # {label: jarak mentah terakhir (cm), buat debug
@@ -778,6 +801,10 @@ while True:
             normal_stable_count = 0
             immediate_confirm_count = 0
             detection_start_time = None
+            stuck_retry_count = 0 
+            if stuck_alert_active:        
+                send_stuck_alert_clear()
+                stuck_alert_active = False
 
         elif rc_conf >= confidence_threshold and rc_label in label_to_preset:
             if is_bin_full(rc_label):
@@ -797,6 +824,8 @@ while True:
                         time.sleep(CONFIG["esp"]["post_neutral_delay"])
                         last_stuck_retry_time = time.time()
                         last_activity_time = time.time()
+                        stuck_retry_count += 1
+                        check_stuck_alert() 
                 else:
                     print(f">>> [RECLASSIFY] Objek baru terdeteksi: {rc_label} ({rc_conf*100:.2f}%)\n")
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -812,6 +841,15 @@ while True:
                     time.sleep(CONFIG["esp"]["post_neutral_delay"])
                     last_preset_sent = rc_preset
                     last_activity_time = time.time()
+                    stuck_retry_count = 0        
+                    if stuck_alert_active:          
+                        send_stuck_alert_clear()
+                        stuck_alert_active = False
+
+        else:
+            print(f">>> [RECLASSIFY] Masih belum bisa diklasifikasi ({rc_label}, {rc_conf*100:.1f}%)\n")
+            stuck_retry_count += 1
+            check_stuck_alert()
 
         next_reclassify_time = time.time() + reclassify_cfg["interval"]
 
