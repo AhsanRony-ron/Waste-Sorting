@@ -720,11 +720,9 @@ while True:
                         print(f"    -> Bin '{label}' PENUH ({pct:.0f}%), servo TIDAK digerakkan\n")
                         trigger_bin_full(label, pct)
                         last_preset_sent = None
-                        # TODO (iterasi berikutnya): state biar reclassify gak nganggep
-                        # ini "objek baru" tiap siklus & gak nulis ulang CSV/foto terus
                     else:
                         print(f"    -> Kirim preset {preset} ke ESP\n")
-                        send_to_esp(preset)
+                        send_to_esp(preset, label, confidence)
                         last_preset_sent = preset
                         time.sleep(CONFIG["esp"]["post_preset_delay"])
                         send_to_esp(0)
@@ -933,6 +931,9 @@ while True:
                         time.sleep(CONFIG["esp"]["post_neutral_delay"])
                         last_preset_sent = best_preset
                         last_activity_time = time.time()
+                        stuck_retry_count = 0 
+                        if stuck_alert_active:       
+                            stuck_alert_active = False
                 else:
                     print(f"    -> '{best_label}' bukan kelas sampah yang disortir, dilewati\n")
 

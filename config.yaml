@@ -43,9 +43,9 @@ detection:
   min_aspect_ratio: 0.2
   max_aspect_ratio: 5.0
   stable_frames_needed_normal: 10
-  motion_tolerance_normal: 50000
+  motion_tolerance_normal: 40000
   immediate_capture_area_ratio: 0.30
-  immediate_confirm_frames: 10
+  immediate_confirm_frames: 5
 
 # --- Refresh reference frame (otomatis / manual) ---
 refresh:

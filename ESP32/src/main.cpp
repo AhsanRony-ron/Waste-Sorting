@@ -199,24 +199,11 @@ void lcdShowStuck() {
     showingIdle = false;
 }
 
-void lcdShowLowConfRetry(String label, float confidence, int attempt, int maxAttempts) {
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Deteksi : ");
-    lcd.print(label);
-    lcd.setCursor(0, 1);
-    lcd.print("Conf.   : ");
-    lcd.print(confidence, 1);
-    lcd.print(" %");
-    lcd.setCursor(0, 2);
-    lcd.print("Conf terlalu rendah,");
-    lcd.setCursor(0, 3);
-    lcd.print("coba lagi (");
-    lcd.print(attempt);
-    lcd.print("/");
-    lcd.print(maxAttempts);
-    lcd.print(")");
-
+void lcdShowLowConfRetry(const String& label, float confidence, int attempt, int maxAttempts) {
+    lcdLine(0, "Deteksi : " + label);
+    lcdLine(1, "Conf.   : " + String(confidence, 1) + " %");
+    lcdLine(2, "Conf terlalu rendah,");
+    lcdLine(3, "coba lagi (" + String(attempt) + "/" + String(maxAttempts) + ")");
     showingIdle = false;
     lastActionTime = millis();
 }
@@ -428,8 +415,8 @@ void handleLine(String line) {
     } else if (line == "STUCK") {
         alertReceived(stuckAlert);
 
-    } else if (rxBuffer.startsWith("RC:")) {
-    String payload = rxBuffer.substring(3);
+    } else if (line.startsWith("RC:")) {
+    String payload = line.substring(3);
     int c1 = payload.indexOf(',');
     int c2 = payload.indexOf(',', c1 + 1);
     int c3 = payload.indexOf(',', c2 + 1);
