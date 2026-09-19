@@ -285,7 +285,14 @@ def notify_bin_full(label, pct):
         "label": label,
         "percent": pct,
     })
-    
+
+def trigger_bin_full(label, pct):
+    global bin_full_wait_label
+    send_bin_full_alert(label)
+    if bin_full_wait_label != label:   # notif Telegram sekali aja per kejadian penuh
+        notify_bin_full(label, pct)
+    bin_full_wait_label = label
+
 def write_event(event_type, data):
     fname = f"{time.time_ns()}.json"
     tmp_path = os.path.join(EVENTS_DIR, f".tmp_{fname}")
@@ -300,6 +307,8 @@ last_ping_sent = 0
 
 stuck_retry_count = 0
 stuck_alert_active = False
+
+bin_full_wait_label = None
 
 bin_capacity_percent = {}   # {label: persentase penuh (0-100)}
 bin_distance_cm = {}        # {label: jarak mentah terakhir (cm), buat debug
@@ -558,6 +567,10 @@ while True:
     poll_commands(frame)  # camera_check pakai frame yang sudah di-crop & dikoreksi warnanya
     read_esp_sensor_data()
 
+    if bin_full_wait_label is not None and not is_bin_full(bin_full_wait_label):
+        print(f">>> [BIN] '{bin_full_wait_label}' sudah dikosongkan, alert dihentikan.\n")
+        bin_full_wait_label = None
+
     det = CONFIG["detection"]
     blur_k = CONFIG["preprocessing"]["gaussian_blur_kernel"]
 
@@ -700,8 +713,7 @@ while True:
                     if is_bin_full(label):
                         pct = bin_capacity_percent.get(label)
                         print(f"    -> Bin '{label}' PENUH ({pct:.0f}%), servo TIDAK digerakkan\n")
-                        send_bin_full_alert(label)
-                        notify_bin_full(label, pct)
+                        trigger_bin_full(label, pct)
                         last_preset_sent = None
                         # TODO (iterasi berikutnya): state biar reclassify gak nganggep
                         # ini "objek baru" tiap siklus & gak nulis ulang CSV/foto terus
