@@ -32,15 +32,19 @@
 
 #define PI_TIMEOUT_MS 7000
 
-#define FULL_ALERT_INTERVAL_MS 12000
+#define FULL_ALERT_TIMEOUT_MS 3000 
+#define FULL_ALERT_INTERVAL_MS 5000
 #define FULL_ALERT_BUZZ_COUNT 3     // TODO: sesuaikan biar beda pola sama online/offline Pi (2x/1x)
 #define FULL_ALERT_BUZZ_ON_MS 150
 #define FULL_ALERT_BUZZ_GAP_MS 150
 bool binFullAlertActive = false;
 String binFullAlertLabel = "";
 unsigned long lastFullAlertBuzz = 0;
+unsigned long lastFullAlertReceived = 0;
+unsigned long lastStuckAlertReceived = 0;
 
-#define STUCK_ALERT_INTERVAL_MS 12000
+#define STUCK_ALERT_TIMEOUT_MS 3000
+#define STUCK_ALERT_INTERVAL_MS 5000
 #define STUCK_ALERT_BUZZ_COUNT 5      // TODO: bikin beda dari FULL_ALERT (3x) biar kebedain kupingnya
 #define STUCK_ALERT_BUZZ_ON_MS 100
 #define STUCK_ALERT_BUZZ_GAP_MS 100
@@ -295,6 +299,18 @@ void loop() {
         lastStuckAlertBuzz = millis();
     }
 
+    if (binFullAlertActive && millis() - lastFullAlertBuzz > FULL_ALERT_INTERVAL_MS) {
+        buzzBeep(FULL_ALERT_BUZZ_COUNT, FULL_ALERT_BUZZ_ON_MS, FULL_ALERT_BUZZ_GAP_MS);
+        lcdShowBinFull(binFullAlertLabel);
+        lastFullAlertBuzz = millis();
+    }
+
+    if (stuckAlertActive && millis() - lastStuckAlertBuzz > STUCK_ALERT_INTERVAL_MS) {
+        buzzBeep(STUCK_ALERT_BUZZ_COUNT, STUCK_ALERT_BUZZ_ON_MS, STUCK_ALERT_BUZZ_GAP_MS);
+        lcdShowStuck();
+        lastStuckAlertBuzz = millis();
+    }
+
     piOnline = (millis() - lastPingFromPi) < PI_TIMEOUT_MS;
 
     if (piOnline != piOnlinePrev) {
@@ -326,30 +342,29 @@ void loop() {
                     Serial.print(" Kaleng:"); Serial.print(distanceCM[2]);
                     Serial.print(" Daun:"); Serial.println(distanceCM[3]);
                     
-                }  else if (rxBuffer.startsWith("FULL:")) {
-                    binFullAlertLabel = rxBuffer.substring(5);
-                    binFullAlertActive = true;
+                    } else if (rxBuffer.startsWith("FULL:")) {
+                        binFullAlertLabel = rxBuffer.substring(5);
+                        lastFullAlertReceived = millis();
 
-                    // langsung bunyi pertama kali, jangan nunggu interval pertama lewat
-                    buzzBeep(FULL_ALERT_BUZZ_COUNT, FULL_ALERT_BUZZ_ON_MS, FULL_ALERT_BUZZ_GAP_MS);
-                    lcdShowBinFull(binFullAlertLabel);
-                    lastFullAlertBuzz = millis();
+                        if (!binFullAlertActive) {
+                            // transisi off -> on: langsung buzz & tampilkan, jangan nunggu interval
+                            binFullAlertActive = true;
+                            buzzBeep(FULL_ALERT_BUZZ_COUNT, FULL_ALERT_BUZZ_ON_MS, FULL_ALERT_BUZZ_GAP_MS);
+                            lcdShowBinFull(binFullAlertLabel);
+                            lastFullAlertBuzz = millis();
+                        }
 
-                } else if (rxBuffer == "FULLCLR") {
-                    binFullAlertActive = false;
-                    lcdShowIdle();
-                
-                                } else if (rxBuffer == "STUCK") {
-                    stuckAlertActive = true;
-                    buzzBeep(STUCK_ALERT_BUZZ_COUNT, STUCK_ALERT_BUZZ_ON_MS, STUCK_ALERT_BUZZ_GAP_MS);
-                    lcdShowStuck();
-                    lastStuckAlertBuzz = millis();
+                    } else if (rxBuffer == "STUCK") {
+                        lastStuckAlertReceived = millis();
 
-                } else if (rxBuffer == "STUCKCLR") {
-                    stuckAlertActive = false;
-                    lcdShowIdle();
-                
-                } else {
+                        if (!stuckAlertActive) {
+                            stuckAlertActive = true;
+                            buzzBeep(STUCK_ALERT_BUZZ_COUNT, STUCK_ALERT_BUZZ_ON_MS, STUCK_ALERT_BUZZ_GAP_MS);
+                            lcdShowStuck();
+                            lastStuckAlertBuzz = millis();
+                        }
+
+                    } else {
                     // parsing "idx" biasa, atau "idx,label,confidence" dari Python
                     int comma1 = rxBuffer.indexOf(',');
                     String idxStr = (comma1 == -1) ? rxBuffer : rxBuffer.substring(0, comma1);
@@ -405,7 +420,8 @@ void loop() {
         }
     }
 
-    if (!showingIdle && !binFullAlertActive && millis() - lastActionTime > IDLE_TIMEOUT_MS) {
+    if (!showingIdle && !binFullAlertActive && !stuckAlertActive && millis() - lastActionTime > IDLE_TIMEOUT_MS) {
         lcdShowIdle();
     }
+    
 }

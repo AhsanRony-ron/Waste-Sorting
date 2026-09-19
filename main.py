@@ -312,6 +312,22 @@ def send_ping():
         ser.write(b"PING\n")
         last_ping_sent = time.time()
 
+last_full_alert_sent_time = 0.0
+last_stuck_alert_sent_time = 0.0
+
+def send_full_alert_ping(label):
+    global last_full_alert_sent_time
+    interval = CONFIG["esp"]["alert_ping_interval"]
+    if time.time() - last_full_alert_sent_time >= interval:
+        ser.write(f"FULL:{label}\n".encode())
+        last_full_alert_sent_time = time.time()
+
+def send_stuck_alert_ping():
+    global last_stuck_alert_sent_time
+    interval = CONFIG["esp"]["alert_ping_interval"]
+    if time.time() - last_stuck_alert_sent_time >= interval:
+        ser.write(b"STUCK\n")
+        last_stuck_alert_sent_time = time.time()
 
 def handle_camera_check(cmd, frame):
     # frame yang sudah di-preprocess (crop + koreksi warna), sama persis
@@ -535,6 +551,10 @@ while True:
     frame = preprocess_frame(raw_frame)
 
     send_ping()
+    if bin_full_wait_label is not None:      # state ini perlu ditambah -- label yang lagi nunggu bin dikosongin
+        send_full_alert_ping(bin_full_wait_label)
+    if stuck_alert_active:
+        send_stuck_alert_ping()
     poll_commands(frame)  # camera_check pakai frame yang sudah di-crop & dikoreksi warnanya
     read_esp_sensor_data()
 

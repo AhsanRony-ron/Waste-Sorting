@@ -42,7 +42,7 @@ detection:
   min_contour_area: 10000
   min_aspect_ratio: 0.2
   max_aspect_ratio: 5.0
-  stable_frames_needed_normal: 5
+  stable_frames_needed_normal: 10
   motion_tolerance_normal: 50000
   immediate_capture_area_ratio: 0.30
   immediate_confirm_frames: 10
@@ -83,6 +83,7 @@ esp:
   post_preset_delay: 2.0
   post_neutral_delay: 1.5
   ping_interval: 1.0
+  alert_ping_interval: 2
 
 # --- Reclassify berkala saat objek masih di piringan ---
 reclassify:
