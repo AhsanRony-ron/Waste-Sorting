@@ -12,15 +12,15 @@
 camera:
   frame_width: 1920
   frame_height: 1080
-  auto_exposure: 1          # 1 = Manual Mode (punya webcam UGREEN kamu)
+  auto_exposure: 0          # 1 = Manual Mode (punya webcam UGREEN kamu)
   target_fps: 30
-  exposure_time_absolute: 500   # range 1-5000, default pabrik 157
+  exposure_time_absolute: 10   # range 1-5000, default pabrik 157
   auto_wb: 0                # 0 = OFF (manual).
   wb_temperature: 4600      # range 2800-6500, aktif hanya kalau auto_wb: 0
   brightness: 0             # range -64..64
   contrast: 34              # range 0..64
   saturation: 64            # range 0..128
-  gain: 20                   # range 0..100
+  gain: 0                   # range 0..100
 
 # --- Crop & koreksi warna software ---
 # Dibaca ulang tiap frame, langsung berubah tanpa restart.
@@ -43,7 +43,7 @@ detection:
   min_aspect_ratio: 0.2
   max_aspect_ratio: 5.0
   stable_frames_needed_normal: 10
-  motion_tolerance_normal: 40000
+  motion_tolerance_normal: 60000
   immediate_capture_area_ratio: 0.30
   immediate_confirm_frames: 5
 
@@ -90,7 +90,7 @@ reclassify:
   interval: 2.0
   stuck_resend_cooldown: 2.0
   stuck_max_retries: 2
-  low_conf_max_attempts: 5
+  low_conf_max_attempts: 3
 
 # --- Model klasifikasi ---
 # path & class_names dipakai sekali saat load model -- ubah BUTUH restart.

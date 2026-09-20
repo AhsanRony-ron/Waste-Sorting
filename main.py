@@ -893,54 +893,58 @@ while True:
                         stuck_alert_active = False
 
         else:
-            low_conf_attempts.append((rc_label, rc_conf))
-            attempt_no = len(low_conf_attempts)
-            max_attempts = reclassify_cfg["low_conf_max_attempts"]
+            if rc_label == 'background':
+                print(f">>> [RECLASSIFY] Kemungkinan background tapi confidence belum cukup "
+                      f"({rc_conf*100:.1f}%), tunggu siklus berikutnya.\n")
+            else:
+                low_conf_attempts.append((rc_label, rc_conf))
+                attempt_no = len(low_conf_attempts)
+                max_attempts = reclassify_cfg["low_conf_max_attempts"]
 
-            send_reclassify_progress(rc_label, rc_conf, attempt_no, max_attempts)
+                send_reclassify_progress(rc_label, rc_conf, attempt_no, max_attempts)
 
-            best_label, best_conf = max(low_conf_attempts, key=lambda x: x[1])
-            reached_limit = attempt_no >= max_attempts
+                best_label, best_conf = max(low_conf_attempts, key=lambda x: x[1])
+                reached_limit = attempt_no >= max_attempts
 
-            print(f">>> [RECLASSIFY] Confidence rendah ({rc_label} {rc_conf*100:.1f}%), "
-                f"percobaan {attempt_no}/{max_attempts}\n")
+                print(f">>> [RECLASSIFY] Confidence rendah ({rc_label} {rc_conf*100:.1f}%), "
+                    f"percobaan {attempt_no}/{max_attempts}\n")
 
-            if best_conf >= confidence_threshold or reached_limit:
-                if reached_limit and best_conf < confidence_threshold:
-                    print(f">>> [RECLASSIFY] {max_attempts}x percobaan gak nembus threshold, "
-                        f"paksa ambil yang tertinggi -> {best_label} ({best_conf*100:.1f}%)\n")
-                else:
-                    print(f">>> [RECLASSIFY] Nembus threshold -> {best_label} ({best_conf*100:.1f}%)\n")
-
-                if best_label in label_to_preset:
-                    best_preset = label_to_preset[best_label]
-
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                    save_path = os.path.join(CAPTURE_DIR, best_label, f"{timestamp}.jpg")
-                    cv2.imwrite(save_path, recheck_crop)
-                    with open(LOG_FILE, 'a', newline='') as f:
-                        writer = csv.writer(f)
-                        writer.writerow([timestamp, best_label, f"{best_conf:.4f}", "", "", "", "", ""])
-
-                    if is_bin_full(best_label):
-                        pct = bin_capacity_percent.get(best_label)
-                        print(f"    -> Bin '{best_label}' PENUH ({pct:.0f}%), servo TIDAK digerakkan\n")
-                        trigger_bin_full(best_label, pct)
-                        last_preset_sent = None
+                if best_conf >= confidence_threshold or reached_limit:
+                    if reached_limit and best_conf < confidence_threshold:
+                        print(f">>> [RECLASSIFY] {max_attempts}x percobaan gak nembus threshold, "
+                            f"paksa ambil yang tertinggi -> {best_label} ({best_conf*100:.1f}%)\n")
                     else:
-                        send_to_esp(best_preset, best_label, best_conf)
-                        time.sleep(CONFIG["esp"]["post_preset_delay"])
-                        send_to_esp(0)
-                        time.sleep(CONFIG["esp"]["post_neutral_delay"])
-                        last_preset_sent = best_preset
-                        last_activity_time = time.time()
-                        stuck_retry_count = 0 
-                        if stuck_alert_active:       
-                            stuck_alert_active = False
-                else:
-                    print(f"    -> '{best_label}' bukan kelas sampah yang disortir, dilewati\n")
+                        print(f">>> [RECLASSIFY] Nembus threshold -> {best_label} ({best_conf*100:.1f}%)\n")
 
-                low_conf_attempts = []
+                    if best_label in label_to_preset:
+                        best_preset = label_to_preset[best_label]
+
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                        save_path = os.path.join(CAPTURE_DIR, best_label, f"{timestamp}.jpg")
+                        cv2.imwrite(save_path, recheck_crop)
+                        with open(LOG_FILE, 'a', newline='') as f:
+                            writer = csv.writer(f)
+                            writer.writerow([timestamp, best_label, f"{best_conf:.4f}", "", "", "", "", ""])
+
+                        if is_bin_full(best_label):
+                            pct = bin_capacity_percent.get(best_label)
+                            print(f"    -> Bin '{best_label}' PENUH ({pct:.0f}%), servo TIDAK digerakkan\n")
+                            trigger_bin_full(best_label, pct)
+                            last_preset_sent = None
+                        else:
+                            send_to_esp(best_preset, best_label, best_conf)
+                            time.sleep(CONFIG["esp"]["post_preset_delay"])
+                            send_to_esp(0)
+                            time.sleep(CONFIG["esp"]["post_neutral_delay"])
+                            last_preset_sent = best_preset
+                            last_activity_time = time.time()
+                            stuck_retry_count = 0
+                            if stuck_alert_active:
+                                stuck_alert_active = False
+                    else:
+                        print(f"    -> '{best_label}' bukan kelas sampah yang disortir, dilewati\n")
+
+                    low_conf_attempts = []
 
         next_reclassify_time = time.time() + reclassify_cfg["interval"]
 
